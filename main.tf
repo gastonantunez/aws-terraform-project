@@ -26,6 +26,7 @@ resource "aws_subnet" "main" {
     Name = "terraform-subnet"
   }
 }
+
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -56,8 +57,8 @@ resource "aws_route_table_association" "main" {
 resource "aws_security_group" "ec2" {
   name   = "terraform-ec2-sg"
   vpc_id = aws_vpc.main.id
-  
-ingress {
+
+  ingress {
     description = "SSH from VPC"
     from_port   = 22
     to_port     = 22
@@ -69,36 +70,82 @@ ingress {
     Name = "terraform-ec2-sg"
   }
 
-ingress {
-  description = "SSH from my IP"
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["[REDACTED_IP]/32"]
+  ingress {
+    description = "SSH from my IP"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["[REDACTED_IP]/32"]
+  }
+
+  ingress {
+    description = "SSH from my IP - casa 2"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["[REDACTED_IP]/32"]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
-ingress {
-  description = "SSH from my IP - casa 2"
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["[REDACTED_IP]/32"]
+resource "aws_instance" "ec2" {
+  ami           = "ami-0fef201115eefe936"
+  instance_type = "t3.micro"
+
+  subnet_id = aws_subnet.main.id
+
+  vpc_security_group_ids = [
+    aws_security_group.ec2.id
+  ]
+
+  iam_instance_profile = aws_iam_instance_profile.ec2.name
+
+  tags = {
+    Name = "terraform-ec2"
+  }
 }
 
-egress {
-  description      = "Allow all outbound traffic"
-  from_port        = 0
-  to_port          = 0
-  protocol         = "-1"
-  cidr_blocks      = ["0.0.0.0/0"]
+resource "aws_iam_role" "ec2" {
+  name = "terraform-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
 }
 
-ingress {
-  description      = "HTTP"
-  from_port        = 80
-  to_port          = 80
-  protocol         = "tcp"
-  cidr_blocks      = ["0.0.0.0/0"]
+resource "aws_iam_role_policy_attachment" "ec2_ssm" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_instance_profile" "ec2" {
+  name = "terraform-ec2-profile"
+  role = aws_iam_role.ec2.name
 }
