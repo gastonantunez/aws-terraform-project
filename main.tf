@@ -196,6 +196,15 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
         ]
 
         Resource = aws_ecr_repository.app.arn
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "iam:GetRole"
+        ]
+
+        Resource = "arn:aws:iam::183004895136:role/github-actions-terraform"
       }
     ]
   })
@@ -232,3 +241,4 @@ resource "aws_iam_role_policy" "ec2_ecr_pull" {
     ]
   })
 }
+
