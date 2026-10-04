@@ -149,3 +149,86 @@ resource "aws_iam_instance_profile" "ec2" {
   name = "terraform-ec2-profile"
   role = aws_iam_role.ec2.name
 }
+
+resource "aws_ecr_repository" "app" {
+  name                 = "mi-app"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "terraform-ecr-mi-app"
+  }
+}
+
+data "aws_iam_role" "github_actions" {
+  name = "github-actions-terraform"
+}
+
+resource "aws_iam_role_policy" "github_actions_ecr" {
+  name = "GitHubActionsECRPush"
+  role = data.aws_iam_role.github_actions.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:CompleteLayerUpload",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+
+        Resource = aws_ecr_repository.app.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ec2_ecr_pull" {
+  name = "EC2ECRPull"
+  role = aws_iam_role.ec2.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+
+        Resource = aws_ecr_repository.app.arn
+      }
+    ]
+  })
+}
