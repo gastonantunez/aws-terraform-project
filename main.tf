@@ -281,3 +281,9 @@ resource "aws_iam_role_policy" "github_actions_s3_state" {
     ]
   })
 }
+
+
+resource "aws_iam_role_policy_attachment" "github_actions_read_only" {
+  role       = data.aws_iam_role.github_actions.name
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
