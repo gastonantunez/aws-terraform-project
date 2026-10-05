@@ -9,7 +9,7 @@ class Handler(BaseHTTPRequestHandler):
         mensaje = """
         <html>
         <body>
-            <h1>Mi aplicación está funcionando</h1>
+            <h1>🚀 Deploy automático funcionando</h1>
             <p>Esta respuesta viene de Python.</p>
             <p>Nginx está funcionando como reverse proxy.</p>
         </body>
