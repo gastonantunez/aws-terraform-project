@@ -38,8 +38,7 @@ jobs:
       - name: Push Docker image
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/mi-app:${{ github.sha }} \
-           
+            ${{ steps.login-ecr.outputs.registry }}/mi-app:${{ github.sha }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -75,3 +74,26 @@ jobs:
             --instance-id "i-02f515a0579fe8bbc" \
             --query "StandardOutputContent" \
             --output text
+
+      - name: Deploy to EC2
+        shell: bash
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "i-02f515a0579fe8bbc" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 183004895136.dkr.ecr.us-east-1.amazonaws.com","docker pull 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}","docker stop mi-app-container || true","docker rm mi-app-container || true","docker run -d --name mi-app-container --restart always -p 3000:3000 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Deploy Command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "i-02f515a0579fe8bbc"
+
+          echo "Deployment result:"
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "i-02f515a0579fe8bbc" \
+            --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
+            --output json
