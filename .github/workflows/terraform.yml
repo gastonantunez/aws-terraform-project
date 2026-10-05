@@ -1,3 +1,4 @@
+
 name: Terraform
 
 on:
@@ -81,7 +82,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "i-02f515a0579fe8bbc" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 183004895136.dkr.ecr.us-east-1.amazonaws.com","docker pull 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}","docker stop mi-app-container || true","docker rm mi-app-container || true","docker run -d --name mi-app-container --restart always -p 3000:3000 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}","sleep 5","docker ps --filter name=mi-app-container --filter status=running --format \"{{.Names}}\""]' \
+            --parameters 'commands=["aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 183004895136.dkr.ecr.us-east-1.amazonaws.com","docker pull 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}","docker stop mi-app-container || true","docker rm mi-app-container || true","docker run -d --name mi-app-container --restart always -p 3000:3000 183004895136.dkr.ecr.us-east-1.amazonaws.com/mi-app:${{ github.sha }}","sleep 5","docker ps --filter name=mi-app-container --filter status=running --format \"{{.Names}}\"","wget -q -O /dev/null http://localhost && echo NGINX_HEALTH_OK"]' \
             --query "Command.CommandId" \
             --output text)
 
@@ -106,4 +107,10 @@ jobs:
             exit 1
           fi
 
-          echo "Deployment successful: mi-app-container is running."
+          if [[ "$RESULT" != *"NGINX_HEALTH_OK"* ]]; then
+            echo "ERROR: Nginx health check failed."
+            exit 1
+          fi
+
+          echo "Deployment successful: container is running and Nginx health check passed."
+
