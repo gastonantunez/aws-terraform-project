@@ -250,3 +250,34 @@ resource "aws_iam_role_policy" "ec2_ecr_pull" {
   })
 }
 
+resource "aws_iam_role_policy" "github_actions_s3_state" {
+  name = "GitHubActionsS3TerraformState"
+  role = data.aws_iam_role.github_actions.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "s3:ListBucket"
+        ]
+
+        Resource = "arn:aws:s3:::gaston-aws-terraform-state-183004895136"
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+
+        Resource = "arn:aws:s3:::gaston-aws-terraform-state-183004895136/terraform.tfstate"
+      }
+    ]
+  })
+}
