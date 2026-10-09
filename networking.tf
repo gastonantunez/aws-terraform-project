@@ -1,3 +1,4 @@
+
 resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr
 
@@ -55,19 +56,11 @@ resource "aws_security_group" "ec2" {
   }
 
   ingress {
-    description = "SSH from my IP"
+    description = "SSH from current IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["[REDACTED_IP]/32"]
-  }
-
-  ingress {
-    description = "SSH from my IP - casa 2"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["[REDACTED_IP]/32"]
+    cidr_blocks = [var.admin_ips]
   }
 
   ingress {

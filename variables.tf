@@ -21,3 +21,8 @@ variable "instance_type" {
   type        = string
   default     = "t3.micro"
 }
+
+variable "admin_ips" {
+  description = "Public IP address allowed to access SSH"
+  type        = string
+}
