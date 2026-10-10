@@ -2,14 +2,14 @@
 
 Infrastructure as Code (IaC) project that provisions and deploys a containerized Python application on AWS using Terraform, Docker, Amazon ECR, GitHub Actions and AWS Systems Manager.
 
-The project demonstrates the complete workflow from infrastructure provisioning to automatic application deployment.
+The project demonstrates the workflow from infrastructure provisioning to automatic application deployment.
 
 ## Architecture
 
 ```text
 GitHub
    |
-   | Push to main
+   | Push to main or manual trigger
    v
 GitHub Actions
    |
@@ -21,7 +21,7 @@ GitHub Actions
    v
 Amazon ECR
    |
-   | Pull image
+   | Pull image through SSM deployment commands
    v
 EC2
    |
@@ -67,19 +67,21 @@ The project provisions the following infrastructure.
 * Default route to the Internet
 * Security Group
 
-The subnet is configured with `map_public_ip_on_launch = false`. The EC2 instance receives its public IP through its instance configuration.
+The subnet's public IP assignment behavior is configured separately from its route table. Terraform exposes the EC2 instance's public IP through an output.
 
 ### EC2
 
-The application runs on a `t3.micro` EC2 instance.
+The application runs on an EC2 instance using the Terraform variable `instance_type`, configured with a default value of `t3.micro`.
 
-The instance hosts:
+The instance is associated with:
 
-* Docker
-* Nginx
-* Python application
+* The Terraform-managed subnet
+* The Terraform-managed Security Group
+* An IAM instance profile for AWS service access
 
-Traffic follows this path:
+The instance runs the containerized Python application as part of the deployment process.
+
+Traffic is intended to follow this path:
 
 ```text
 Internet
@@ -94,18 +96,18 @@ Nginx
 Python application :3000
 ```
 
-Nginx works as a reverse proxy, allowing the application to remain listening internally on port 3000 while HTTP traffic enters through port 80.
+Nginx is intended to work as a reverse proxy, allowing the application to listen on port 3000 while HTTP traffic enters through port 80. The Nginx installation and configuration are not defined in the Terraform files reviewed for this project.
 
 ### Security Group
 
 The security group allows:
 
-* HTTP traffic on port 80
-* SSH access from the VPC
-* SSH access from explicitly configured IP addresses
-* Outbound traffic
+* HTTP traffic on port 80 from `0.0.0.0/0`
+* All outbound traffic
 
-The application is exposed through HTTP while the Python service remains behind Nginx.
+Inbound SSH access on port 22 is not allowed. The GitHub Actions workflow uses AWS Systems Manager (SSM) to send commands to the EC2 instance.
+
+The application is intended to be exposed through HTTP, with Nginx forwarding requests to the Python service on port 3000.
 
 ## Docker and Amazon ECR
 
@@ -115,33 +117,27 @@ The GitHub Actions workflow:
 
 1. Builds the Docker image.
 2. Authenticates with Amazon ECR.
-3. Tags the image using the Git commit SHA.
+3. Tags the image using the Git commit SHA and GitHub Actions run attempt.
 4. Pushes the image to the ECR repository.
 
-Using the commit SHA as the image tag creates a direct relationship between:
+The image tag follows this format:
 
 ```text
-Git commit
-   |
-   v
-Docker image
-   |
-   v
-Deployed application
+<commit-sha>-<run-attempt>
 ```
 
-This makes it possible to identify exactly which source version is running in the environment.
+This makes it possible to identify the source commit associated with an image and distinguish separate attempts of a workflow run.
 
 ## CI/CD
 
-The project uses GitHub Actions for automatic deployment.
+The project uses GitHub Actions for automated application deployment.
 
-The workflow is triggered when changes are pushed to the `main` branch.
+The workflow is triggered when changes are pushed to the `main` branch or when manually started through `workflow_dispatch`.
 
 The pipeline performs the following steps:
 
 ```text
-Push to GitHub
+Push to GitHub or manual trigger
       |
       v
 Authenticate with AWS using OIDC
@@ -174,12 +170,14 @@ Pull new Docker image
 Replace running container
       |
       v
-Run health checks
+Run deployment checks
 ```
 
-The deployment does not require storing long-lived AWS access keys inside GitHub.
+The workflow does not require long-lived AWS access keys to be stored for its AWS authentication flow.
 
 Instead, GitHub Actions assumes an AWS IAM role using OpenID Connect.
+
+The current workflow runs `terraform init`, `terraform validate`, and `terraform plan`. It does not run `terraform apply`. Application deployment is performed through SSM commands.
 
 ## AWS IAM
 
@@ -187,25 +185,26 @@ Two main IAM roles are used.
 
 ### GitHub Actions role
 
-The GitHub Actions role is responsible for:
+The GitHub Actions role is responsible for the AWS operations required by the pipeline, including:
 
-* Reading AWS infrastructure information
 * Accessing the Terraform remote state
 * Pushing Docker images to ECR
 * Sending commands through SSM
+* Performing the other AWS operations allowed by its attached IAM policies
 
 The role uses GitHub's OIDC provider to authenticate the workflow with AWS.
 
-The current configuration also includes AWS managed `ReadOnlyAccess` permissions. A future improvement is to replace this broad permission with a more restrictive least-privilege policy.
+The current configuration has previously been documented as including AWS managed `ReadOnlyAccess` permissions. Its present policy attachments should be checked in AWS before treating that detail as a complete description of the role's current permissions.
+
+A future improvement is to restrict permissions according to the principle of least privilege.
 
 ### EC2 role
 
-The EC2 instance uses an IAM role with:
+The EC2 instance uses an IAM instance profile.
 
-* `AmazonSSMManagedInstanceCore`
-* Permission to pull images from the project's ECR repository
+The project uses this identity for AWS service access, including SSM management and the permissions required to pull container images from ECR.
 
-This allows the EC2 instance to receive SSM commands and authenticate with ECR without storing AWS credentials on the server.
+This allows the EC2 instance to receive SSM commands and access ECR without storing long-lived AWS credentials directly on the server.
 
 ## Terraform Remote State
 
@@ -233,11 +232,11 @@ terraform {
 }
 ```
 
-S3 versioning is enabled for the state bucket.
+This configuration allows Terraform to use the S3 bucket as its remote state backend, provided the bucket exists and the executing identity has the required permissions.
 
-This allows both local Terraform execution and GitHub Actions to work with the same infrastructure state.
+The backend configuration does not define state locking.
 
-State locking is not currently configured and is listed as a future improvement.
+Bucket versioning, encryption, and public access settings are managed separately in AWS and are not confirmed by `backend.tf` alone.
 
 ## Terraform Structure
 
@@ -267,18 +266,18 @@ The Terraform configuration is organized by responsibility:
 
 ### Main Terraform files
 
-| File            | Responsibility                           |
-| --------------- | ---------------------------------------- |
-| `provider.tf`   | AWS provider configuration               |
-| `backend.tf`    | Remote Terraform state                   |
-| `versions.tf`   | Terraform provider requirements          |
-| `variables.tf`  | Configurable project variables           |
-| `outputs.tf`    | Useful infrastructure outputs            |
-| `networking.tf` | VPC, subnet, routes and Internet Gateway |
-| `compute.tf`    | EC2 instance and related resources       |
-| `iam.tf`        | IAM roles and permissions                |
-| `ecr.tf`        | ECR repository                           |
-| `main.tf`       | Project-level configuration              |
+| File | Responsibility |
+|---|---|
+| `provider.tf` | AWS provider configuration |
+| `backend.tf` | Remote Terraform state |
+| `versions.tf` | Terraform and provider requirements |
+| `variables.tf` | Configurable project variables |
+| `outputs.tf` | Useful infrastructure outputs |
+| `networking.tf` | VPC, subnet, routes, Internet Gateway and Security Group |
+| `compute.tf` | EC2 instance |
+| `iam.tf` | IAM roles, instance profile and permissions |
+| `ecr.tf` | ECR repository |
+| `main.tf` | Project-level configuration comment |
 
 Terraform treats all `.tf` files in the same directory as a single configuration.
 
@@ -326,15 +325,17 @@ Terraform exposes useful infrastructure information through outputs:
 * EC2 public IP
 * ECR repository URL
 
-These values can be retrieved after deployment with:
+These values can be retrieved after initialization and deployment with:
 
 ```bash
 terraform output
 ```
 
+The `ec2_public_ip` output reads the public IP address reported by the EC2 resource. The output definition itself does not configure how that address is assigned.
+
 ## Application
 
-The application is a simple Python HTTP server.
+The application is a simple Python HTTP server built with Python's standard library.
 
 It listens on:
 
@@ -342,15 +343,19 @@ It listens on:
 0.0.0.0:3000
 ```
 
-The application returns an HTML response confirming that:
+The application uses `HTTPServer` and `BaseHTTPRequestHandler` and responds to GET requests with an HTML page and HTTP status code `200`.
 
-* the automatic deployment is working
-* the response is generated by Python
-* Nginx is operating as a reverse proxy
+The HTML response includes messages indicating that:
+
+* The automatic deployment is working
+* The response comes from Python
+* Nginx is working as a reverse proxy
+
+The Python code displays the Nginx message, but the application code itself does not configure or verify Nginx.
 
 ## Deployment
 
-A successful deployment performs the following operations on the EC2 instance:
+The GitHub Actions workflow performs the following operations on the EC2 instance through SSM:
 
 ```text
 ECR authentication
@@ -371,29 +376,23 @@ Start new container
 Verify container is running
       |
       v
-Verify Nginx -> Python connectivity
+Check HTTP response through Nginx
 ```
 
-The container is configured with:
+The container is started with:
 
 ```text
 --restart always
 ```
 
-so Docker automatically attempts to restart it if the container stops.
+This instructs Docker to attempt to restart the container when it stops, subject to Docker's restart policy behavior.
 
 ## Health Check
 
-The deployment includes an application-level health check.
+The deployment includes two basic checks:
 
-Instead of checking only whether the Docker container is running, the workflow verifies the complete request path:
-
-```text
-Nginx :80
-   |
-   v
-Python :3000
-```
+1. Verify that `mi-app-container` is running.
+2. Check whether an HTTP request to `http://localhost` succeeds and outputs the `NGINX_HEALTH_OK` marker.
 
 The workflow executes:
 
@@ -401,47 +400,49 @@ The workflow executes:
 wget -q -O /dev/null http://localhost && echo NGINX_HEALTH_OK
 ```
 
-The deployment is considered successful only when the expected health-check result is returned.
+The workflow then checks for both the container name and the health-check marker in the command output.
+
+This is a basic deployment verification. It does not independently verify the returned HTML content or provide a dedicated application health endpoint.
 
 ## Real Troubleshooting
 
-During development, several real infrastructure and deployment issues were investigated and resolved.
+During development, several infrastructure and deployment issues were investigated and resolved.
 
 ### GitHub Actions OIDC
 
 The first GitHub Actions deployment failed because AWS did not authorize the workflow to assume the IAM role through OIDC.
 
-The IAM trust relationship was reviewed and corrected so the GitHub Actions workflow could assume the AWS role.
+The IAM trust relationship was reviewed and corrected so the intended GitHub Actions workflow could assume the AWS role.
 
 After correcting the trust configuration, GitHub Actions successfully authenticated with AWS.
 
 ### SSM connectivity
 
-An SSM command initially failed to execute correctly.
+The EC2 SSM agent was investigated and restarted after the instance was not appearing as an online managed node.
 
-The EC2 SSM agent was investigated and restarted, after which SSM communication worked normally.
+SSM communication subsequently worked normally.
 
 ### Application health check
 
-A direct `curl` test initially produced unexpected output because the application response contained an emoji and the AWS CLI environment had character encoding limitations.
+A direct `curl` test initially produced unexpected output because the application response contained an emoji and the AWS CLI environment had character-encoding limitations.
 
-A `curl -I` test returned HTTP 501 because the Python application only implements the GET method.
+A `curl -I` test returned HTTP 501 because the Python application implements GET but does not implement HEAD.
 
-The test was therefore changed to:
+The test was changed to:
 
 ```bash
 wget -q -O /dev/null http://localhost
 ```
 
-This correctly verified the complete Nginx -> Python request path.
+This checks whether the HTTP request to the local endpoint succeeds. The intended Nginx-to-Python request path depends on the Nginx configuration present on the EC2 instance.
 
 ### Terraform refactoring
 
 The Terraform configuration was reorganized into multiple files by responsibility.
 
-The infrastructure itself was not recreated because the existing Terraform resource addresses remained unchanged.
+The infrastructure was not recreated because the existing Terraform resource addresses remained unchanged.
 
-After the refactoring:
+The refactoring was validated using:
 
 ```text
 terraform fmt
@@ -450,29 +451,34 @@ terraform plan
 terraform apply
 ```
 
-completed successfully without modifying the existing AWS infrastructure.
+The zero-change `terraform apply` result documented during that refactoring was historical. A later Security Group change removed the SSH ingress rules.
 
 ## Validation
 
-The project was validated through Terraform, GitHub Actions and the deployed application.
+The project has been validated through Terraform, GitHub Actions, SSM and the deployed application.
 
-Terraform reported:
+During the Terraform refactoring, the following result was recorded:
 
 ```text
 Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
 ```
 
-The deployed application returned:
+This result describes that earlier refactoring run, not the subsequent Security Group update.
 
-```text
-HTTP 200
-```
-
-The response confirmed that Python was running behind Nginx.
-
-The final Terraform refactoring was also successfully processed by GitHub Actions.
+The GitHub Actions workflow was also run successfully after SSH access was removed. Its deployment checks verify that the application container is running and that the local HTTP check succeeds.
 
 ## How to Run
+
+### Prerequisites
+
+Before running the commands below, ensure that:
+
+* Git is installed.
+* Terraform is installed.
+* AWS CLI is installed and configured with appropriate credentials.
+* The configured S3 backend bucket already exists and is accessible.
+* The AWS resources and permissions required by the Terraform configuration are available.
+* The GitHub Actions IAM role, OIDC provider, ECR repository and SSM configuration are prepared if you intend to run the CI/CD pipeline.
 
 Clone the repository:
 
@@ -499,7 +505,7 @@ Review the planned changes:
 terraform plan
 ```
 
-Apply the infrastructure:
+Apply infrastructure changes only after reviewing the plan:
 
 ```bash
 terraform apply
@@ -511,22 +517,26 @@ View Terraform outputs:
 terraform output
 ```
 
+These commands describe the general Terraform workflow. They do not guarantee that a fresh deployment can be created from an empty AWS account without first preparing the backend, permissions and required resources.
+
 ## Security Considerations
 
-The project avoids storing AWS access keys inside the GitHub repository.
+The project uses GitHub Actions OIDC to authenticate with AWS rather than relying on long-lived AWS access keys in the workflow.
 
-GitHub Actions authenticates with AWS through OIDC.
+The EC2 Security Group does not permit inbound SSH access.
 
-Terraform state is stored remotely in a private S3 bucket with public access blocked.
+SSM is used for remote command execution, and the EC2 instance uses an IAM instance profile for AWS service access.
 
-The EC2 instance uses IAM roles instead of storing AWS credentials locally.
+The S3 backend should be protected by appropriate bucket policies, IAM permissions, encryption and public access settings. These bucket properties should be verified directly in AWS.
+
+IAM policies should be reviewed periodically and restricted to the minimum permissions required by each role.
 
 ## Future Improvements
 
 Possible future improvements include:
 
-* Implementing Terraform state locking
-* Replacing broad `ReadOnlyAccess` permissions with more restrictive IAM policies
+* Implementing and configuring Terraform state locking
+* Replacing broad IAM permissions with more restrictive least-privilege policies
 * Implementing application rollback
 * Adding a dedicated `/health` endpoint
 * Creating reusable Terraform modules
@@ -539,6 +549,6 @@ These improvements are intentionally outside the current project scope.
 
 ## Project Objective
 
-The objective of this project was to build a practical AWS environment using Infrastructure as Code and demonstrate an end-to-end cloud deployment workflow.
+The objective of this project is to build a practical AWS environment using Infrastructure as Code and demonstrate a cloud application deployment workflow.
 
-The project combines infrastructure provisioning, IAM, networking, containers, remote Terraform state, CI/CD, AWS Systems Manager and application deployment into a single reproducible workflow.
+The project combines infrastructure provisioning, IAM, networking, containers, remote Terraform state, CI/CD, AWS Systems Manager and application deployment into a single project.
