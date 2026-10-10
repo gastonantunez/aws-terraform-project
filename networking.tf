@@ -1,4 +1,3 @@
-
 resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr
 
@@ -46,22 +45,6 @@ resource "aws_route_table_association" "main" {
 resource "aws_security_group" "ec2" {
   name   = "terraform-ec2-sg"
   vpc_id = aws_vpc.main.id
-
-  ingress {
-    description = "SSH from VPC"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-
-  ingress {
-    description = "SSH from current IP"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.admin_ips]
-  }
 
   ingress {
     description = "HTTP"
