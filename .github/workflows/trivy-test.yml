@@ -1,6 +1,9 @@
 name: Trivy Test
 
 on:
+  push:
+    branches:
+      - test-trivy
   workflow_dispatch:
 
 permissions:
