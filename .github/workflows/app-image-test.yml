@@ -24,6 +24,36 @@ jobs:
       - name: Build Docker image
         run: docker build -t mi-app:security-test ./app
 
+      - name: Inspect Python packages and pip SBOM
+        run: |
+          docker run --rm mi-app:security-test python -c '
+          import importlib.metadata as metadata
+          import pathlib
+          import pip
+
+          print("Python:", __import__("sys").version)
+          print("pip:", pip.__version__)
+
+          for name in ("msgpack", "setuptools", "urllib3"):
+              try:
+                  print(f"{name}: {metadata.version(name)}")
+              except metadata.PackageNotFoundError:
+                  print(f"{name}: NOT INSTALLED")
+
+          sbom = pathlib.Path(pip.__file__).parent / "_vendor" / "bom.cdx.json"
+          print("Embedded pip SBOM:", sbom)
+          print("SBOM exists:", sbom.exists())
+
+          if sbom.exists():
+              content = sbom.read_text(errors="replace")
+              for package in (
+                  "msgpack@1.1.2",
+                  "setuptools@70.3.0",
+                  "urllib3@2.7.0",
+              ):
+                  print(f"SBOM contains {package}: {package in content}")
+          '
+
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
