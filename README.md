@@ -1,8 +1,8 @@
 # AWS Terraform Project
 
-Infrastructure as Code (IaC) project that provisions and deploys a containerized Python application on AWS using Terraform, Docker, Amazon ECR, GitHub Actions and AWS Systems Manager.
+Infrastructure as Code (IaC) project that provisions and deploys a containerized Python application on AWS using Terraform, Docker, Amazon ECR, GitHub Actions, AWS Systems Manager and Trivy.
 
-The project demonstrates the workflow from infrastructure provisioning to automatic application deployment.
+The project demonstrates the workflow from infrastructure provisioning to automated application deployment, including an initial Docker image vulnerability scanning step.
 
 ## Architecture
 
@@ -15,15 +15,19 @@ GitHub Actions
    |
    +-- OIDC authentication
    |
+   +-- Login to Amazon ECR
+   |
    +-- Docker build
    |
-   +-- Push image
-   v
-Amazon ECR
+   +-- Trivy vulnerability scan
    |
-   | Pull image through SSM deployment commands
+   +-- Push image to ECR
+   |
+   +-- Terraform validation and plan
+   |
+   +-- SSM deployment commands
    v
-EC2
+Amazon EC2
    |
    +-- Docker container
    |      |
@@ -32,10 +36,10 @@ EC2
    +-- Nginx :80
           |
           v
-       Internet
+       HTTP endpoint
 ```
 
-Terraform manages the AWS infrastructure, while GitHub Actions handles the application deployment pipeline.
+Terraform manages the AWS infrastructure, while GitHub Actions handles the application build, security scanning and deployment pipeline.
 
 ## Technologies
 
@@ -48,6 +52,7 @@ Terraform manages the AWS infrastructure, while GitHub Actions handles the appli
 * AWS Systems Manager (SSM)
 * Amazon S3
 * Docker
+* Trivy
 * Nginx
 * Python
 * Git
@@ -115,10 +120,18 @@ The Python application is packaged as a Docker image.
 
 The GitHub Actions workflow:
 
-1. Builds the Docker image.
-2. Authenticates with Amazon ECR.
-3. Tags the image using the Git commit SHA and GitHub Actions run attempt.
+1. Authenticates with Amazon ECR.
+2. Builds the Docker image.
+3. Scans the local image with Trivy for CRITICAL and HIGH severity vulnerabilities.
 4. Pushes the image to the ECR repository.
+
+Trivy is integrated after the Docker build and before the image push. This allows the workflow to scan the image produced by the build before publishing it to Amazon ECR.
+
+The initial Trivy configuration:
+
+* Scans for CRITICAL and HIGH severity vulnerabilities.
+* Ignores vulnerabilities without an available fix.
+* Does not fail the pipeline solely because vulnerabilities are detected.
 
 The image tag follows this format:
 
@@ -128,11 +141,39 @@ The image tag follows this format:
 
 This makes it possible to identify the source commit associated with an image and distinguish separate attempts of a workflow run.
 
+## Container Image Security Scanning
+
+Trivy is an open-source security scanner used in this project to check Docker images for known vulnerabilities.
+
+The scan is part of the GitHub Actions workflow and targets the image built for the application.
+
+The configured scan parameters are:
+
+```yaml
+scan-type: image
+severity: CRITICAL,HIGH
+ignore-unfixed: true
+exit-code: '0'
+format: table
+```
+
+These settings mean:
+
+* `scan-type: image` scans a container image.
+* `severity: CRITICAL,HIGH` selects critical and high severity findings.
+* `ignore-unfixed: true` excludes vulnerabilities for which a fix is not available.
+* `exit-code: '0'` prevents vulnerability findings alone from causing the scan step to fail.
+* `format: table` displays the scan results in the workflow logs.
+
+This is an initial detection-only security control. The pipeline does not currently block image publication solely because Trivy finds vulnerabilities.
+
+The separate Trivy test workflow successfully scanned the test image `alpine:3.22` and reported zero vulnerabilities for that test. This result applies only to the test image and does not establish the vulnerability status of the application image.
+
 ## CI/CD
 
 The project uses GitHub Actions for automated application deployment.
 
-The workflow is triggered when changes are pushed to the `main` branch or when manually started through `workflow_dispatch`.
+The main workflow is triggered when changes are pushed to the `main` branch or when manually started through `workflow_dispatch`.
 
 The pipeline performs the following steps:
 
@@ -147,6 +188,9 @@ Login to ECR
       |
       v
 Build Docker image
+      |
+      v
+Scan image with Trivy
       |
       v
 Push image to ECR
@@ -178,6 +222,8 @@ The workflow does not require long-lived AWS access keys to be stored for its AW
 Instead, GitHub Actions assumes an AWS IAM role using OpenID Connect.
 
 The current workflow runs `terraform init`, `terraform validate`, and `terraform plan`. It does not run `terraform apply`. Application deployment is performed through SSM commands.
+
+The Trivy scan runs before the image is pushed to Amazon ECR. The current configuration reports vulnerability findings but does not enforce a vulnerability-based deployment block.
 
 ## AWS IAM
 
@@ -259,7 +305,8 @@ The Terraform configuration is organized by responsibility:
 |   `-- Dockerfile
 |-- .github/
 |   `-- workflows/
-|       `-- terraform.yml
+|       |-- terraform.yml
+|       `-- trivy-test.yml
 |-- .gitignore
 `-- .terraform.lock.hcl
 ```
@@ -278,6 +325,8 @@ The Terraform configuration is organized by responsibility:
 | `iam.tf` | IAM roles, instance profile and permissions |
 | `ecr.tf` | ECR repository |
 | `main.tf` | Project-level configuration comment |
+| `.github/workflows/terraform.yml` | Main CI/CD workflow, including Trivy scanning |
+| `.github/workflows/trivy-test.yml` | Isolated Trivy test workflow |
 
 Terraform treats all `.tf` files in the same directory as a single configuration.
 
@@ -467,6 +516,8 @@ This result describes that earlier refactoring run, not the subsequent Security 
 
 The GitHub Actions workflow was also run successfully after SSH access was removed. Its deployment checks verify that the application container is running and that the local HTTP check succeeds.
 
+The isolated Trivy test workflow completed successfully against `alpine:3.22` and reported zero vulnerabilities for that image. The application image's Trivy scan must be verified through a run of the main workflow.
+
 ## How to Run
 
 ### Prerequisites
@@ -523,6 +574,10 @@ These commands describe the general Terraform workflow. They do not guarantee th
 
 The project uses GitHub Actions OIDC to authenticate with AWS rather than relying on long-lived AWS access keys in the workflow.
 
+Trivy is integrated into the main CI/CD workflow to scan the built Docker image for CRITICAL and HIGH severity vulnerabilities before it is pushed to Amazon ECR. The initial configuration ignores vulnerabilities without an available fix and does not block the pipeline solely because vulnerability findings are detected.
+
+The isolated Trivy test workflow verifies that the scanner can run in GitHub Actions. The test result does not guarantee that the application image is free of vulnerabilities.
+
 The EC2 Security Group does not permit inbound SSH access.
 
 SSM is used for remote command execution, and the EC2 instance uses an IAM instance profile for AWS service access.
@@ -535,7 +590,9 @@ IAM policies should be reviewed periodically and restricted to the minimum permi
 
 Possible future improvements include:
 
-* Implementing and configuring Terraform state locking
+* Making Trivy findings block publication according to a defined vulnerability policy
+* Reviewing and addressing vulnerabilities found in the application image
+* Implementing Terraform state locking
 * Replacing broad IAM permissions with more restrictive least-privilege policies
 * Implementing application rollback
 * Adding a dedicated `/health` endpoint
@@ -551,4 +608,4 @@ These improvements are intentionally outside the current project scope.
 
 The objective of this project is to build a practical AWS environment using Infrastructure as Code and demonstrate a cloud application deployment workflow.
 
-The project combines infrastructure provisioning, IAM, networking, containers, remote Terraform state, CI/CD, AWS Systems Manager and application deployment into a single project.
+The project combines infrastructure provisioning, IAM, networking, containers, remote Terraform state, CI/CD, container image vulnerability scanning, AWS Systems Manager and application deployment into a single project.

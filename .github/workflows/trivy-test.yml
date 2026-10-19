@@ -1,0 +1,26 @@
+name: Trivy Test
+
+on:
+  push:
+    branches:
+      - test-trivy
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan test image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Scan Alpine image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: alpine:3.22
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
