@@ -37,7 +37,6 @@ jobs:
 
           print("Python:", sys.version)
           print("pip:", pip.__version__)
-          print("pip vendor directory:", vendor)
           print("Embedded pip SBOM:", sbom)
           print("SBOM exists:", sbom.exists())
 
@@ -47,8 +46,7 @@ jobs:
               except metadata.PackageNotFoundError:
                   print(f"{name} installed version: NOT INSTALLED")
 
-              package_path = vendor / name
-              print(f"{name} vendor path exists:", package_path.exists())
+              print(f"{name} vendor path exists:", (vendor / name).exists())
 
           if sbom.exists():
               content = sbom.read_text(errors="replace")
@@ -79,4 +77,4 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           format: table
-          extra-args: --skip-files /usr/local/lib/python3.13/site-packages/pip/_vendor/bom.cdx.json
+          skip-files: /usr/local/lib/python3.13/site-packages/pip/_vendor/bom.cdx.json
