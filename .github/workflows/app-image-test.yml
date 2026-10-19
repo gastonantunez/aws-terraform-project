@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   scan:
-    name: Build and scan application image
+    name: Build and compare Trivy scans
     runs-on: ubuntu-latest
 
     steps:
@@ -32,13 +32,14 @@ jobs:
           import pip
           import sys
 
-          root = pathlib.Path(pip.__file__).parent
-          vendor = root / "_vendor"
+          vendor = pathlib.Path(pip.__file__).parent / "_vendor"
           sbom = vendor / "bom.cdx.json"
 
           print("Python:", sys.version)
           print("pip:", pip.__version__)
           print("pip vendor directory:", vendor)
+          print("Embedded pip SBOM:", sbom)
+          print("SBOM exists:", sbom.exists())
 
           for name in ("msgpack", "setuptools", "urllib3"):
               try:
@@ -46,16 +47,8 @@ jobs:
               except metadata.PackageNotFoundError:
                   print(f"{name} installed version: NOT INSTALLED")
 
-              matches = [
-                  str(path.relative_to(vendor))
-                  for path in vendor.rglob("*")
-                  if path.name == name or path.name.startswith(name + "-")
-              ] if vendor.exists() else []
-
-              print(f"{name} paths inside pip vendor: {matches[:20]}")
-
-          print("Embedded pip SBOM:", sbom)
-          print("SBOM exists:", sbom.exists())
+              package_path = vendor / name
+              print(f"{name} vendor path exists:", package_path.exists())
 
           if sbom.exists():
               content = sbom.read_text(errors="replace")
@@ -67,7 +60,7 @@ jobs:
                   print(f"SBOM contains {package}: {package in content}")
           '
 
-      - name: Scan Docker image with Trivy
+      - name: Baseline scan - original image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
@@ -76,3 +69,14 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           format: table
+
+      - name: Diagnostic scan - skip pip embedded SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: mi-app:security-test
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+          extra-args: --skip-files /usr/local/lib/python3.13/site-packages/pip/_vendor/bom.cdx.json
