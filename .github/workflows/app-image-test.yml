@@ -32,21 +32,28 @@ jobs:
           import pip
           import sys
 
+          print("Python:", sys.version)
+          print("pip:", pip.__version__)
+
           vendor = pathlib.Path(pip.__file__).parent / "_vendor"
           sbom = vendor / "bom.cdx.json"
 
-          print("Python:", sys.version)
-          print("pip:", pip.__version__)
-          print("Embedded pip SBOM:", sbom)
-          print("SBOM exists:", sbom.exists())
+          print("Vendor directory:", vendor)
+          print("Embedded SBOM exists:", sbom.exists())
+
+          for name in ("msgpack", "urllib3"):
+              try:
+                  module = __import__("pip._vendor." + name, fromlist=["*"])
+                  print(f"{name} vendored version:", getattr(module, "__version__", "unknown"))
+                  print(f"{name} module path:", getattr(module, "__file__", "unknown"))
+              except Exception as error:
+                  print(f"{name} import error:", repr(error))
 
           for name in ("msgpack", "setuptools", "urllib3"):
               try:
-                  print(f"{name} installed version: {metadata.version(name)}")
+                  print(f"{name} installed distribution:", metadata.version(name))
               except metadata.PackageNotFoundError:
-                  print(f"{name} installed version: NOT INSTALLED")
-
-              print(f"{name} vendor path exists:", (vendor / name).exists())
+                  print(f"{name} installed distribution: NOT FOUND")
 
           if sbom.exists():
               content = sbom.read_text(errors="replace")
