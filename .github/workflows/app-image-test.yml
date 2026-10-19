@@ -1,0 +1,35 @@
+name: App Image Security Test
+
+on:
+  push:
+    branches:
+      - test-trivy
+    paths:
+      - "app/**"
+      - ".github/workflows/app-image-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Build and scan application image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t mi-app:security-test ./app
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: mi-app:security-test
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
