@@ -30,17 +30,30 @@ jobs:
           import importlib.metadata as metadata
           import pathlib
           import pip
+          import sys
 
-          print("Python:", __import__("sys").version)
+          root = pathlib.Path(pip.__file__).parent
+          vendor = root / "_vendor"
+          sbom = vendor / "bom.cdx.json"
+
+          print("Python:", sys.version)
           print("pip:", pip.__version__)
+          print("pip vendor directory:", vendor)
 
           for name in ("msgpack", "setuptools", "urllib3"):
               try:
-                  print(f"{name}: {metadata.version(name)}")
+                  print(f"{name} installed version: {metadata.version(name)}")
               except metadata.PackageNotFoundError:
-                  print(f"{name}: NOT INSTALLED")
+                  print(f"{name} installed version: NOT INSTALLED")
 
-          sbom = pathlib.Path(pip.__file__).parent / "_vendor" / "bom.cdx.json"
+              matches = [
+                  str(path.relative_to(vendor))
+                  for path in vendor.rglob("*")
+                  if path.name == name or path.name.startswith(name + "-")
+              ] if vendor.exists() else []
+
+              print(f"{name} paths inside pip vendor: {matches[:20]}")
+
           print("Embedded pip SBOM:", sbom)
           print("SBOM exists:", sbom.exists())
 
