@@ -1,4 +1,4 @@
-﻿# Investigación y reducción de superficie de ataque con Trivy
+# Investigación y reducción de superficie de ataque con Trivy
 
 ## Contexto
 
@@ -72,7 +72,7 @@ El resultado de cero vulnerabilidades corresponde al objetivo Debian reportado p
 
 La advertencia sobre SBOM de terceros debe tenerse en cuenta al interpretar los resultados. Además, el análisis no encontró archivos específicos de lenguajes, por lo que no corresponde afirmar que se realizó un análisis completo de dependencias Python de la aplicación.
 
-El workflow actual utiliza `ignore-unfixed: true` y `exit-code: "0"`. Por lo tanto, el éxito del workflow por sí solo no debe interpretarse como una garantía de ausencia de vulnerabilidades.
+El workflow de prueba y el workflow de despliegue utilizan `ignore-unfixed: true` y `exit-code: "1"` para los hallazgos CRITICAL/HIGH con corrección disponible. Los hallazgos sin corrección se ignoran en este control. El éxito del escaneo no garantiza la ausencia total de vulnerabilidades, especialmente porque Trivy advierte sobre posibles imprecisiones en SBOM de terceros.
 
 ## Estado del cambio
 
