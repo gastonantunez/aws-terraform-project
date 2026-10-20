@@ -45,17 +45,29 @@ jobs:
               raise SystemExit("ERROR: /app/app.py is missing")
           '
 
-      - name: Baseline scan - runtime image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: mi-app:security-test
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
-          format: table
+      - name: Test application HTTP response
+        run: |
+          docker run -d --name mi-app-test -p 3000:3000 mi-app:security-test
 
-      - name: Diagnostic scan - skip former pip SBOM path
+          cleanup() {
+            docker rm -f mi-app-test >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent http://127.0.0.1:3000/ -o response.html; then
+              break
+            fi
+            sleep 1
+          done
+
+          test -f response.html
+          grep -q "Despliegue automatico funcionando" response.html
+          grep -q "Esta respuesta viene de Python" response.html
+
+          echo "HTTP response test passed"
+
+      - name: Trivy scan - runtime image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
@@ -64,4 +76,3 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           format: table
-          skip-files: /usr/local/lib/python3.13/site-packages/pip/_vendor/bom.cdx.json
