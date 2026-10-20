@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - test-trivy
+      - main
     paths:
       - "app/**"
       - ".github/workflows/app-image-test.yml"
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   scan:
-    name: Build and compare Trivy scans
+    name: Build, test, and scan runtime image
     runs-on: ubuntu-latest
 
     steps:
@@ -33,7 +34,6 @@ jobs:
 
           print("Python:", sys.version)
           print("pip available:", importlib.util.find_spec("pip") is not None)
-          print("Working directory:", pathlib.Path.cwd())
 
           app = pathlib.Path("/app/app.py")
           print("Application file exists:", app.is_file())
@@ -74,5 +74,5 @@ jobs:
           image-ref: mi-app:security-test
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: "0"
+          exit-code: "1"
           format: table
