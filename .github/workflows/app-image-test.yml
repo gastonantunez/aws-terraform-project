@@ -1,0 +1,78 @@
+name: App Image Security Test
+
+on:
+  push:
+    branches:
+      - test-trivy
+      - main
+    paths:
+      - "app/**"
+      - ".github/workflows/app-image-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Build, test, and scan runtime image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t mi-app:security-test ./app
+
+      - name: Verify runtime image without pip
+        run: |
+          docker run --rm mi-app:security-test python -c '
+          import importlib.util
+          import pathlib
+          import sys
+
+          print("Python:", sys.version)
+          print("pip available:", importlib.util.find_spec("pip") is not None)
+
+          app = pathlib.Path("/app/app.py")
+          print("Application file exists:", app.is_file())
+
+          if importlib.util.find_spec("pip") is not None:
+              raise SystemExit("ERROR: pip is still available in the runtime image")
+
+          if not app.is_file():
+              raise SystemExit("ERROR: /app/app.py is missing")
+          '
+
+      - name: Test application HTTP response
+        run: |
+          docker run -d --name mi-app-test -p 3000:3000 mi-app:security-test
+
+          cleanup() {
+            docker rm -f mi-app-test >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent http://127.0.0.1:3000/ -o response.html; then
+              break
+            fi
+            sleep 1
+          done
+
+          test -f response.html
+          grep -q "Despliegue automatico funcionando" response.html
+          grep -q "Esta respuesta viene de Python" response.html
+
+          echo "HTTP response test passed"
+
+      - name: Trivy scan - runtime image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: mi-app:security-test
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

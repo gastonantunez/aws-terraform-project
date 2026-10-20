@@ -44,7 +44,7 @@ jobs:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/mi-app:${{ env.IMAGE_TAG }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: '0'
+          exit-code: '1'
           format: table
 
       - name: Push Docker image
