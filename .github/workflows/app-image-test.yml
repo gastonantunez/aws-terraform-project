@@ -24,48 +24,28 @@ jobs:
       - name: Build Docker image
         run: docker build -t mi-app:security-test ./app
 
-      - name: Inspect Python packages and pip SBOM
+      - name: Verify runtime image without pip
         run: |
           docker run --rm mi-app:security-test python -c '
-          import importlib.metadata as metadata
+          import importlib.util
           import pathlib
-          import pip
           import sys
 
           print("Python:", sys.version)
-          print("pip:", pip.__version__)
+          print("pip available:", importlib.util.find_spec("pip") is not None)
+          print("Working directory:", pathlib.Path.cwd())
 
-          vendor = pathlib.Path(pip.__file__).parent / "_vendor"
-          sbom = vendor / "bom.cdx.json"
+          app = pathlib.Path("/app/app.py")
+          print("Application file exists:", app.is_file())
 
-          print("Vendor directory:", vendor)
-          print("Embedded SBOM exists:", sbom.exists())
+          if importlib.util.find_spec("pip") is not None:
+              raise SystemExit("ERROR: pip is still available in the runtime image")
 
-          for name in ("msgpack", "urllib3"):
-              try:
-                  module = __import__("pip._vendor." + name, fromlist=["*"])
-                  print(f"{name} vendored version:", getattr(module, "__version__", "unknown"))
-                  print(f"{name} module path:", getattr(module, "__file__", "unknown"))
-              except Exception as error:
-                  print(f"{name} import error:", repr(error))
-
-          for name in ("msgpack", "setuptools", "urllib3"):
-              try:
-                  print(f"{name} installed distribution:", metadata.version(name))
-              except metadata.PackageNotFoundError:
-                  print(f"{name} installed distribution: NOT FOUND")
-
-          if sbom.exists():
-              content = sbom.read_text(errors="replace")
-              for package in (
-                  "msgpack@1.1.2",
-                  "setuptools@70.3.0",
-                  "urllib3@2.7.0",
-              ):
-                  print(f"SBOM contains {package}: {package in content}")
+          if not app.is_file():
+              raise SystemExit("ERROR: /app/app.py is missing")
           '
 
-      - name: Baseline scan - original image
+      - name: Baseline scan - runtime image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
@@ -75,7 +55,7 @@ jobs:
           exit-code: "0"
           format: table
 
-      - name: Diagnostic scan - skip pip embedded SBOM
+      - name: Diagnostic scan - skip former pip SBOM path
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
