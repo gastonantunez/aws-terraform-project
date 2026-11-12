@@ -18,6 +18,7 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 PR_URL = os.getenv("PR_URL", f"https://github.com/{REPOSITORY}/pull/{PR_NUMBER}")
 MAX_GEMINI_RESPONSE_BYTES = 1_000_000
 MAX_GITHUB_RESPONSE_BYTES = 2_000_000
+MAX_GITHUB_COMMENT_CHARS = 60_000
 
 
 def read_text(path, limit):
@@ -296,7 +297,13 @@ def render_report(report):
         "---",
         "_AI-generated review. Validate findings before taking action; this is not a substitute for human security review._"
     ])
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    if len(rendered) > MAX_GITHUB_COMMENT_CHARS:
+        rendered = rendered[:MAX_GITHUB_COMMENT_CHARS - 100] + (
+            "\n\n[Report truncated to fit GitHub's comment size limit.]"
+        )
+    return rendered
+
 
 def publish_comment(markdown):
     headers = {
