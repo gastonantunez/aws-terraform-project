@@ -1,7 +1,7 @@
 name: AI Security Review
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
@@ -32,12 +32,23 @@ jobs:
           format: json
           output: trivy-config.json
 
-      - name: Upload Trivy report
+      - name: Run Checkov Terraform scan
+        uses: bridgecrewio/checkov-action@v12.1347.0
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true
+          output_format: json
+          output_file_path: checkov.json
+
+      - name: Upload static security reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-config-report
-          path: trivy-config.json
+          name: static-security-reports
+          path: |
+            trivy-config.json
+            checkov.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -71,7 +82,7 @@ jobs:
       - name: Download static scan report
         uses: actions/download-artifact@v4
         with:
-          name: trivy-config-report
+          name: static-security-reports
           path: reports
         continue-on-error: true
 
@@ -91,6 +102,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_API_URL: ${{ github.api_url }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python trusted/.github/scripts/ai_security_review.py
 
       - name: Upload AI review
