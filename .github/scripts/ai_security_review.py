@@ -26,16 +26,15 @@ def read_text(path, limit):
 
 def redact_sensitive(text):
     patterns = [
-        (r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]"),
-        (r"\\bAKIA[0-9A-Z]{16}\\b", "[REDACTED AWS ACCESS KEY]"),
-        (r"\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b", "[REDACTED GITHUB TOKEN]"),
-        (r"\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b", "[REDACTED SLACK TOKEN]"),
-        (r"(?i)(api[_-]?key|client[_-]?secret|password|passwd|token|secret_access_key)\\s*[:=]\\s*(['\\"]?)[A-Za-z0-9_./+=:-]{8,}\\2", r"\\1=[REDACTED]"),
+        (r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]"),
+        (r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]"),
+        (r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]"),
+        (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED SLACK TOKEN]"),
+        (r"(?i)(api[_-]?key|client[_-]?secret|password|passwd|token|secret_access_key)\s*[:=]\s*(['\"]?)[A-Za-z0-9_./+=:-]{8,}\2", r"\1=[REDACTED]"),
     ]
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
     return text
-
 
 def gemini_review(diff, scanner_results):
     schema = {
@@ -131,7 +130,7 @@ def render_report(report):
         "---",
         "_AI-generated review. Validate findings before taking action; this is not a substitute for human security review._"
     ])
-    return "\n".join(lines)
+    return "\n".join(lines).replace("@", "@\u200b")
 
 
 def publish_comment(markdown):
