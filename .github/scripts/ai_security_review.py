@@ -160,15 +160,39 @@ def main():
     if not diff.strip():
         diff = "No textual diff was available. Review is limited."
 
-    scanner = read_text("trivy-config.json", 20000)
-    if not scanner:
-        scanner = "No Trivy configuration report was available."
+    scanner_parts = []
+    for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
+        report_text = read_text(report_path, 20000)
+        if report_text:
+            scanner_parts.append(f"{report_path}:\\n{report_text}")
+    scanner = "\\n\\n".join(scanner_parts) or "No static scanner reports were available."
 
     try:
         report = gemini_review(diff, scanner)
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
         publish_comment(markdown)
+        if SLACK_WEBHOOK_URL and (
+            report.get("decision") == "BLOCK"
+            or report.get("risk_level") in ("HIGH", "CRITICAL")
+        ):
+            slack_payload = {
+                "text": (
+                    f":rotating_light: *AI Security Review — {report.get('risk_level', 'UNKNOWN')}*\\n"
+                    f"Repository: {REPOSITORY}\\n"
+                    f"Pull Request: {API_URL.replace('api.github.com', 'github.com')}/{REPOSITORY}/pull/{PR_NUMBER}\\n"
+                    f"Risk score: {report.get('risk_score', 'N/A')}/100\\n"
+                    f"Decision: {report.get('decision', 'REVIEW_REQUIRED')}"
+                )
+            }
+            slack_request = urllib.request.Request(
+                SLACK_WEBHOOK_URL,
+                data=json.dumps(slack_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(slack_request, timeout=20) as slack_response:
+                slack_response.read()
         print(markdown)
         return 0
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TypeError) as error:
