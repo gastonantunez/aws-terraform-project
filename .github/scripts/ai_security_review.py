@@ -103,36 +103,83 @@ def gemini_review(diff, scanner_results):
     return json.loads(response_text)
 
 
+def validate_report(report):
+    if not isinstance(report, dict):
+        raise ValueError("Gemini returned a non-object report.")
+
+    required = {"risk_score", "risk_level", "summary", "findings", "decision"}
+    if not required.issubset(report):
+        raise ValueError("Gemini report is missing required fields.")
+
+    score = report["risk_score"]
+    if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+        raise ValueError("Gemini risk_score must be an integer from 0 to 100.")
+
+    if report["risk_level"] not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        raise ValueError("Gemini returned an invalid risk_level.")
+    if report["decision"] not in {"PASS", "REVIEW_REQUIRED", "BLOCK"}:
+        raise ValueError("Gemini returned an invalid decision.")
+    if not isinstance(report["summary"], str):
+        raise ValueError("Gemini summary must be a string.")
+    if not isinstance(report["findings"], list) or len(report["findings"]) > 30:
+        raise ValueError("Gemini findings must be a list with at most 30 items.")
+
+    finding_fields = {
+        "severity", "category", "file", "line",
+        "title", "evidence", "impact", "recommendation"
+    }
+    for finding in report["findings"]:
+        if not isinstance(finding, dict) or not finding_fields.issubset(finding):
+            raise ValueError("Gemini returned a malformed finding.")
+        if finding["severity"] not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+            raise ValueError("Gemini returned an invalid finding severity.")
+        for field in finding_fields - {"severity"}:
+            if not isinstance(finding[field], str):
+                raise ValueError("Gemini finding fields must be strings.")
+
+    return report
+
+
+def markdown_text(value, limit=2000):
+    # Render model-provided content as plain text, not executable Markdown.
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
+    value = " ".join(value.split())[:limit]
+    value = value.replace("@", "@\u200b")
+    for char in r"\`*_{}[]()#+-.!|>":
+        value = value.replace(char, "\\" + char)
+    return value
+
+
 def render_report(report):
-    score = max(0, min(100, int(report["risk_score"])))
+    score = report["risk_score"]
     level = report["risk_level"]
+    decision = report["decision"]
     lines = [
         MARKER,
         "## AI Security Review",
-        f"**Risk score:** {score}/100 · **Risk level:** {level} · **Decision:** {report['decision']}",
+        f"**Risk score:** {score}/100 · **Risk level:** {level} · **Decision:** {decision}",
         "",
-        report["summary"],
+        markdown_text(report["summary"], 4000),
         ""
     ]
-    findings = report.get("findings", [])
+    findings = report["findings"]
     if not findings:
         lines.append("No concrete security findings were identified in the reviewed diff.")
     for index, finding in enumerate(findings, 1):
         lines.extend([
-            f"### {index}. [{finding['severity']}] {finding['title']}",
-            f"- **Category:** {finding['category']}",
-            f"- **Location:** {finding['file']}:{finding['line']}",
-            f"- **Evidence:** {finding['evidence']}",
-            f"- **Impact:** {finding['impact']}",
-            f"- **Recommendation:** {finding['recommendation']}",
+            f"### {index}. [{finding['severity']}] {markdown_text(finding['title'], 300)}",
+            f"- **Category:** {markdown_text(finding['category'], 200)}",
+            f"- **Location:** {markdown_text(finding['file'], 500)}:{markdown_text(finding['line'], 30)}",
+            f"- **Evidence:** {markdown_text(finding['evidence'], 1500)}",
+            f"- **Impact:** {markdown_text(finding['impact'], 1000)}",
+            f"- **Recommendation:** {markdown_text(finding['recommendation'], 1500)}",
             ""
         ])
     lines.extend([
         "---",
         "_AI-generated review. Validate findings before taking action; this is not a substitute for human security review._"
     ])
-    return "\n".join(lines).replace("@", "@\u200b")
-
+    return "\n".join(lines)
 
 def publish_comment(markdown):
     headers = {
@@ -187,7 +234,7 @@ def main():
     scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
     try:
-        report = gemini_review(diff, scanner)
+        report = validate_report(gemini_review(diff, scanner))
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
         publish_comment(markdown)
