@@ -189,6 +189,7 @@ class SecretRedactionTests(unittest.TestCase):
             "client_secret: SuperSecret123",
             'password = "a secret value with spaces"',
             'secret_access_key: "another secret with spaces"',
+            '{"password":"json secret value","client_secret":"another json secret"}',
             "github_pat_" + "a" * 30,
             "glpat-" + "a" * 25,
             "npm_" + "a" * 25,
@@ -202,6 +203,16 @@ class SecretRedactionTests(unittest.TestCase):
                 redacted = review.redact_sensitive(secret)
                 self.assertNotIn(secret, redacted)
                 self.assertIn("REDACTED", redacted)
+
+
+
+    def test_redacts_json_secret_fields_and_preserves_valid_json(self):
+        raw = '{"password":"json secret value","client_secret":"another json secret"}'
+        redacted = review.redact_sensitive(raw)
+        parsed = __import__("json").loads(redacted)
+        self.assertEqual(parsed["password"], "[REDACTED]")
+        self.assertEqual(parsed["client_secret"], "[REDACTED]")
+        self.assertNotIn("json secret value", redacted)
 
 
 class ScannerNormalizationTests(unittest.TestCase):
@@ -238,10 +249,6 @@ class MarkdownSafetyTests(unittest.TestCase):
         self.assertIn(review.MARKER, rendered)
         self.assertNotIn("<img", rendered)
         self.assertIn("AI Security Review", rendered)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class BoundedResponseTests(unittest.TestCase):
@@ -289,3 +296,7 @@ class ReportSizeTests(unittest.TestCase):
         rendered = review.render_report(report)
         self.assertLessEqual(len(rendered), review.MAX_GITHUB_COMMENT_CHARS)
         self.assertIn("Report truncated", rendered)
+
+
+if __name__ == "__main__":
+    unittest.main()
