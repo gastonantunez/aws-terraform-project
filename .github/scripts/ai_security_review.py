@@ -18,9 +18,16 @@ PR_URL = os.getenv("PR_URL", f"https://github.com/{REPOSITORY}/pull/{PR_NUMBER}"
 
 
 def read_text(path, limit):
+    """Read a bounded regular file; do not follow symlinks from workspace data."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return ""
+    file_path = Path(path)
     try:
-        return Path(path).read_text(encoding="utf-8", errors="replace")[:limit]
-    except FileNotFoundError:
+        if file_path.is_symlink() or not file_path.is_file():
+            return ""
+        with file_path.open("r", encoding="utf-8", errors="replace") as source:
+            return source.read(limit)
+    except OSError:
         return ""
 
 
