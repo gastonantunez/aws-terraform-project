@@ -4,11 +4,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
 concurrency:
   group: ai-security-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -17,12 +12,14 @@ jobs:
   static-security:
     name: Static security scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout pull request
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Run Trivy IaC and configuration scan
         uses: aquasecurity/trivy-action@0.36.0
@@ -49,19 +46,41 @@ jobs:
     runs-on: ubuntu-latest
     needs: static-security
     if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
-      - name: Checkout pull request
+      # The review script is checked out from the trusted base commit,
+      # never from the pull-request branch.
+      - name: Checkout trusted review code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Checkout pull request source
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-src
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download static scan report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-config-report
+          path: reports
+        continue-on-error: true
 
       - name: Build review diff
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git fetch origin "$BASE_REF" --depth=1
-          git diff --no-ext-diff --unified=5 "origin/$BASE_REF...HEAD" -- . ':!*.lock' > pr.diff
+          git -C pr-src diff --no-ext-diff --unified=5 "$BASE_SHA...$HEAD_SHA" -- . ':!*.lock' > pr.diff
           echo "Diff size: $(wc -c < pr.diff) bytes"
 
       - name: Run AI security review
@@ -72,7 +91,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_API_URL: ${{ github.api_url }}
-        run: python .github/scripts/ai_security_review.py
+        run: python trusted/.github/scripts/ai_security_review.py
 
       - name: Upload AI review
         if: always()
