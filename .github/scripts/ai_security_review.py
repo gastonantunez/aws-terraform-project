@@ -27,7 +27,9 @@ def read_text(path, limit):
 def redact_sensitive(text):
     patterns = [
         (r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]"),
-        (r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]"),
+        (r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]"),
+        (r"\bAIza[0-9A-Za-z_-]{35}\b", "[REDACTED GOOGLE API KEY]"),
+        (r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}", "Bearer [REDACTED TOKEN]"),
         (r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]"),
         (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED SLACK TOKEN]"),
         (r"(?i)(api[_-]?key|client[_-]?secret|password|passwd|token|secret_access_key)\s*[:=]\s*(['\"]?)[A-Za-z0-9_./+=:-]{8,}\2", r"\1=[REDACTED]"),
