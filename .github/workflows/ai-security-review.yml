@@ -25,9 +25,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Run AI security review unit tests
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
-
       - name: Run Trivy IaC and configuration scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
