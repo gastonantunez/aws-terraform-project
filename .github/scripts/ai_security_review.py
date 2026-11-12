@@ -179,6 +179,9 @@ def main():
     for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
         report_text = read_text(report_path, 20000)
         if report_text:
+            # Scanner output can contain detected secret values; redact it before
+            # including it in the prompt sent to the external AI provider.
+            report_text = redact_sensitive(report_text)
             scanner_parts.append(f"{report_path}:\n{report_text}")
     scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
