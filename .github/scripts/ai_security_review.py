@@ -65,7 +65,7 @@ def redact_sensitive(text):
         (r"\b(?:sk|rk)_live_[A-Za-z0-9]{12,}\b", "[REDACTED STRIPE TOKEN]"),
         (r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b", "[REDACTED JWT]"),
         (
-            r"""(?i)(?P<key>["']?(?:api[_-]?key|client[_-]?secret|client[_-]?id|password|passwd|token|secret|secret_access_key|access[_-]?key|private[_-]?key|webhook[_-]?url|access[_-]?token|refresh[_-]?token|id[_-]?token|connection[_-]?string|database[_-]?url|credential|authorization)["']?)(?P<separator>\s*[:=]\s*)(?:(?P<quote>["'])(?P<quoted>[^\r\n]*?)(?P=quote)|(?P<plain>[^\s,;#}]+))""",
+            r"""(?i)(?P<key>["']?(?:api[_-]?key|client[_-]?secret|client[_-]?id|password|passwd|token|secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?access[_-]?key|secret_access_key|access[_-]?key[_-]?id|access[_-]?key|session[_-]?token|private[_-]?key|webhook[_-]?url|access[_-]?token|refresh[_-]?token|id[_-]?token|connection[_-]?string|database[_-]?url|credential|authorization)["']?)(?P<separator>\s*[:=]\s*)(?:(?P<quote>["'])(?P<quoted>[^\r\n]*?)(?P=quote)|(?P<plain>[^\s,;#}]+))""",
             lambda match: (
                 match.group("key") + match.group("separator")
                 + (match.group("quote") + "[REDACTED]" + match.group("quote")
