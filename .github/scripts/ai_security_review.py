@@ -129,12 +129,14 @@ def validate_report(report):
     if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
         raise ValueError("Gemini risk_score must be an integer from 0 to 100.")
 
-    if report["risk_level"] not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+    levels = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+    decisions = {"PASS", "REVIEW_REQUIRED", "BLOCK"}
+    if not isinstance(report["risk_level"], str) or report["risk_level"] not in levels:
         raise ValueError("Gemini returned an invalid risk_level.")
-    if report["decision"] not in {"PASS", "REVIEW_REQUIRED", "BLOCK"}:
+    if not isinstance(report["decision"], str) or report["decision"] not in decisions:
         raise ValueError("Gemini returned an invalid decision.")
-    if not isinstance(report["summary"], str):
-        raise ValueError("Gemini summary must be a string.")
+    if not isinstance(report["summary"], str) or len(report["summary"]) > 4000:
+        raise ValueError("Gemini summary must be a string of at most 4000 characters.")
     if not isinstance(report["findings"], list) or len(report["findings"]) > 30:
         raise ValueError("Gemini findings must be a list with at most 30 items.")
 
@@ -142,14 +144,38 @@ def validate_report(report):
         "severity", "category", "file", "line",
         "title", "evidence", "impact", "recommendation"
     }
+    highest_severity = 0
+    total_text = len(report["summary"])
+    field_limits = {
+        "category": 200, "file": 500, "line": 30, "title": 300,
+        "evidence": 1500, "impact": 1000, "recommendation": 1500
+    }
     for finding in report["findings"]:
         if not isinstance(finding, dict) or not finding_fields.issubset(finding):
             raise ValueError("Gemini returned a malformed finding.")
-        if finding["severity"] not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        severity = finding["severity"]
+        if not isinstance(severity, str) or severity not in levels:
             raise ValueError("Gemini returned an invalid finding severity.")
-        for field in finding_fields - {"severity"}:
-            if not isinstance(finding[field], str):
-                raise ValueError("Gemini finding fields must be strings.")
+        highest_severity = max(highest_severity, levels[severity])
+        total_text += len(severity)
+        for field, limit in field_limits.items():
+            value = finding[field]
+            if not isinstance(value, str) or len(value) > limit:
+                raise ValueError(f"Gemini finding field {field} is invalid or too long.")
+            total_text += len(value)
+
+    level_rank = levels[report["risk_level"]]
+    decision = report["decision"]
+    if highest_severity >= 3 and level_rank < highest_severity:
+        raise ValueError("Risk level is inconsistent with the most severe finding.")
+    if highest_severity >= 2 and decision == "PASS":
+        raise ValueError("PASS is not allowed when medium or higher findings exist.")
+    if decision == "BLOCK" and (level_rank < 3 or highest_severity < 3):
+        raise ValueError("BLOCK requires HIGH or CRITICAL risk and a matching finding.")
+    if report["risk_level"] in {"HIGH", "CRITICAL"} and decision == "PASS":
+        raise ValueError("PASS is inconsistent with HIGH or CRITICAL risk.")
+    if total_text > 50000:
+        raise ValueError("Gemini report exceeds the 50000-character content limit.")
 
     return report
 
