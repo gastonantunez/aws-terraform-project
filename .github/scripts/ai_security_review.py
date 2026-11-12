@@ -83,7 +83,7 @@ def gemini_review(diff, scanner_results):
         "risks and cloud/IaC risks such as public exposure, excessive IAM permissions, secret leakage, "
         "insecure defaults, injection, authentication/authorization flaws, and unsafe container settings. "
         "Use scanner output as supporting evidence, not as unquestionable truth. "
-        "Risk score must be an integer from 0 (no material risk) to 100 (critical). "
+        "Risk score must be an integer from 0 to 100. Map scores consistently: LOW 0-24, MEDIUM 25-49, HIGH 50-79, CRITICAL 80-100. "
         "BLOCK only for clear critical/high-impact exploitable findings; REVIEW_REQUIRED for meaningful "
         "uncertainty or medium/high issues; otherwise PASS. If no concrete findings exist, return an empty array. "
         "Return only JSON matching the requested schema.\n\n"
@@ -174,6 +174,15 @@ def validate_report(report):
             total_text += len(value)
 
     level_rank = levels[report["risk_level"]]
+    score_bands = {
+        "LOW": (0, 24),
+        "MEDIUM": (25, 49),
+        "HIGH": (50, 79),
+        "CRITICAL": (80, 100),
+    }
+    score_min, score_max = score_bands[report["risk_level"]]
+    if not score_min <= score <= score_max:
+        raise ValueError("Risk score is inconsistent with risk_level.")
     decision = report["decision"]
     if highest_severity >= 3 and level_rank < highest_severity:
         raise ValueError("Risk level is inconsistent with the most severe finding.")
