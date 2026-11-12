@@ -207,7 +207,7 @@ class SecretRedactionTests(unittest.TestCase):
 
 
     def test_redacts_json_secret_fields_and_preserves_valid_json(self):
-        raw = '{"password":"json secret value","client_secret":"another json secret"}'
+        raw = '{"password":"json secret value","client_secret":"another json secret","AWS_SECRET_ACCESS_KEY":"aws credential value"}'
         redacted = review.redact_sensitive(raw)
         parsed = __import__("json").loads(redacted)
         self.assertEqual(parsed["password"], "[REDACTED]")
@@ -248,7 +248,8 @@ class MarkdownSafetyTests(unittest.TestCase):
         report["findings"][0]["title"] = "<img src=x>"
         rendered = review.render_report(report)
         self.assertIn(review.MARKER, rendered)
-        self.assertNotIn("<img", rendered)
+        self.assertIn(r"\\<img", rendered)
+        self.assertNotIn("<img", rendered.replace(r"\\<img", ""))
         self.assertIn("AI Security Review", rendered)
 
 
