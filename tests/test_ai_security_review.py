@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT_PATH = (
@@ -186,6 +187,14 @@ class SecretRedactionTests(unittest.TestCase):
             "xoxb-" + "a" * 15,
             "password=SuperSecret123",
             "client_secret: SuperSecret123",
+            'password = "a secret value with spaces"',
+            'secret_access_key: "another secret with spaces"',
+            "github_pat_" + "a" * 30,
+            "glpat-" + "a" * 25,
+            "npm_" + "a" * 25,
+            "pypi-" + "a" * 25,
+            "sk_live_" + "a" * 20,
+            "eyJ" + "A" * 15 + "." + "B" * 15 + "." + "C" * 15,
             "-----BEGIN RSA PRIVATE KEY-----\\nprivate-material\\n-----END RSA PRIVATE KEY-----",
         ]
         for secret in samples:
@@ -233,3 +242,50 @@ class MarkdownSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoundedResponseTests(unittest.TestCase):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self, limit=-1):
+            return self.payload[:limit] if limit >= 0 else self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def test_accepts_response_at_limit(self):
+        response = self.FakeResponse(b"1234")
+        self.assertEqual(review.read_limited_response(response, 4), b"1234")
+
+    def test_rejects_response_over_limit(self):
+        response = self.FakeResponse(b"12345")
+        with self.assertRaises(ValueError):
+            review.read_limited_response(response, 4)
+
+    def test_rejects_malformed_gemini_candidate(self):
+        payload = b'{"candidates":["not-an-object"]}'
+        with patch.object(review.urllib.request, "urlopen", return_value=self.FakeResponse(payload)):
+            with self.assertRaises(ValueError):
+                review.gemini_review("diff", "scanner")
+
+    def test_rejects_non_object_gemini_response(self):
+        payload = b'["unexpected"]'
+        with patch.object(review.urllib.request, "urlopen", return_value=self.FakeResponse(payload)):
+            with self.assertRaises(ValueError):
+                review.gemini_review("diff", "scanner")
+
+
+class ReportSizeTests(unittest.TestCase):
+    def test_rendered_comment_stays_under_github_limit(self):
+        report = valid_report()
+        report["findings"] = [valid_finding("LOW") for _ in range(30)]
+        for finding in report["findings"]:
+            finding["evidence"] = "<" * 1500
+        rendered = review.render_report(report)
+        self.assertLessEqual(len(rendered), review.MAX_GITHUB_COMMENT_CHARS)
+        self.assertIn("Report truncated", rendered)
