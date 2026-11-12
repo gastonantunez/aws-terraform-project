@@ -5,6 +5,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+import stat
 
 MARKER = "<!-- ai-security-review -->"
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -15,31 +16,57 @@ PR_NUMBER = os.getenv("PR_NUMBER", "")
 API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 PR_URL = os.getenv("PR_URL", f"https://github.com/{REPOSITORY}/pull/{PR_NUMBER}")
+MAX_GEMINI_RESPONSE_BYTES = 1_000_000
+MAX_GITHUB_RESPONSE_BYTES = 2_000_000
 
 
 def read_text(path, limit):
-    """Read a bounded regular file; do not follow symlinks from workspace data."""
+    """Read a bounded regular file without following symlinks."""
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         return ""
-    file_path = Path(path)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
     try:
-        if file_path.is_symlink() or not file_path.is_file():
+        descriptor = os.open(os.fspath(path), flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return ""
-        with file_path.open("r", encoding="utf-8", errors="replace") as source:
+        with os.fdopen(descriptor, "r", encoding="utf-8", errors="replace") as source:
+            descriptor = None
             return source.read(limit)
-    except OSError:
+    except (OSError, TypeError, ValueError):
         return ""
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def read_limited_response(response, limit):
+    """Read at most limit bytes and reject oversized HTTP responses."""
+    data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Remote response exceeded the configured size limit.")
+    return data
 
 
 def redact_sensitive(text):
+    """Redact common credential formats and values assigned to secret-like keys."""
     patterns = [
         (r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]"),
         (r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]"),
         (r"\bAIza[0-9A-Za-z_-]{35}\b", "[REDACTED GOOGLE API KEY]"),
-        (r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}", "Bearer [REDACTED TOKEN]"),
-        (r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]"),
+        (r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer [REDACTED TOKEN]"),
+        (r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b", "[REDACTED GITHUB TOKEN]"),
+        (r"\bglpat-[A-Za-z0-9_-]{20,}\b", "[REDACTED GITLAB TOKEN]"),
         (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED SLACK TOKEN]"),
-        (r"(?i)(api[_-]?key|client[_-]?secret|password|passwd|token|secret_access_key)\s*[:=]\s*(['\"]?)[A-Za-z0-9_./+=:-]{8,}\2", r"\1=[REDACTED]"),
+        (r"\b(?:npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,})\b", "[REDACTED PACKAGE TOKEN]"),
+        (r"\b(?:sk|rk)_live_[A-Za-z0-9]{12,}\b", "[REDACTED STRIPE TOKEN]"),
+        (r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b", "[REDACTED JWT]"),
+        (
+            r"""(?i)\b(api[_-]?key|client[_-]?secret|client[_-]?id|password|passwd|token|secret|secret_access_key|access[_-]?key|private[_-]?key|webhook[_-]?url)\b\s*[:=]\s*(?:(["'])([^\r\n]*?)\2|([^\s,;#]+))""",
+            lambda match: f"{match.group(1)}=[REDACTED]",
+        ),
     ]
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
@@ -107,23 +134,43 @@ def gemini_review(diff, scanner_results):
         method="POST"
     )
     with urllib.request.urlopen(request, timeout=90) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        raw_payload = read_limited_response(response, MAX_GEMINI_RESPONSE_BYTES)
+    try:
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Gemini returned an invalid JSON response.") from error
+    if not isinstance(payload, dict):
+        raise ValueError("Gemini response must be a JSON object.")
+
     candidates = payload.get("candidates")
     if not isinstance(candidates, list) or not candidates:
-        prompt_feedback = payload.get("promptFeedback", {})
-        block_reason = prompt_feedback.get("blockReason", "no candidate returned")
+        prompt_feedback = payload.get("promptFeedback")
+        block_reason = (
+            prompt_feedback.get("blockReason", "no candidate returned")
+            if isinstance(prompt_feedback, dict)
+            else "no candidate returned"
+        )
         raise ValueError(f"Gemini did not return a review candidate ({block_reason}).")
-
-    content = candidates[0].get("content", {})
-    parts = content.get("parts", [])
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        raise ValueError("Gemini returned a malformed candidate.")
+    content = candidate.get("content")
+    if not isinstance(content, dict):
+        raise ValueError("Gemini returned malformed candidate content.")
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        raise ValueError("Gemini returned malformed candidate parts.")
     response_text = "".join(
-        part.get("text", "")
-        for part in parts
+        part["text"] for part in parts
         if isinstance(part, dict) and isinstance(part.get("text"), str)
     )
     if not response_text.strip():
-        raise ValueError("Gemini returned an empty review response.")
-    return json.loads(response_text)
+        finish_reason = candidate.get("finishReason", "unknown")
+        raise ValueError(f"Gemini returned no usable text (finish reason: {finish_reason}).")
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Gemini response text was not valid JSON.") from error
 
 
 def validate_report(report):
@@ -267,7 +314,11 @@ def publish_comment(markdown):
         page_url = f"{comments_url}?per_page=100&page={page}"
         request = urllib.request.Request(page_url, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
-            comments = json.loads(response.read().decode("utf-8"))
+            raw_comments = read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
+        try:
+            comments = json.loads(raw_comments.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("GitHub returned invalid comments JSON.") from error
         if not isinstance(comments, list):
             raise ValueError("GitHub returned an invalid comments response.")
 
@@ -275,7 +326,8 @@ def publish_comment(markdown):
             (
                 item for item in comments
                 if isinstance(item, dict)
-                and MARKER in item.get("body", "")
+                and isinstance(item.get("body"), str)
+                and MARKER in item["body"]
                 and isinstance(item.get("user"), dict)
                 and item["user"].get("login") == "github-actions[bot]"
             ),
@@ -284,9 +336,14 @@ def publish_comment(markdown):
         if existing or len(comments) < 100:
             break
         page += 1
+        if page > 100:
+            raise ValueError("GitHub comment pagination exceeded the safety limit.")
 
     if existing:
-        url = f"{API_URL}/repos/{REPOSITORY}/issues/comments/{existing['id']}"
+        comment_id = existing.get("id")
+        if isinstance(comment_id, bool) or not isinstance(comment_id, int):
+            raise ValueError("GitHub returned an invalid existing comment ID.")
+        url = f"{API_URL}/repos/{REPOSITORY}/issues/comments/{comment_id}"
         method = "PATCH"
     else:
         url = comments_url
@@ -299,7 +356,8 @@ def publish_comment(markdown):
         method=method
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        response.read()
+        read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
+
 
 def main():
     if not API_KEY:
@@ -348,10 +406,10 @@ def main():
                 method="POST"
             )
             with urllib.request.urlopen(slack_request, timeout=20) as slack_response:
-                slack_response.read()
+                read_limited_response(slack_response, 64_000)
         print(markdown)
         return 0
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError) as error:
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError, OSError, RecursionError) as error:
         # Do not print exception text: network errors can contain secret webhook URLs.
         print(
             f"AI security review failed ({type(error).__name__}); details suppressed to protect secrets.",
