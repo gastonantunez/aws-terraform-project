@@ -296,7 +296,11 @@ def main():
         print(markdown)
         return 0
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError) as error:
-        print(f"AI security review failed: {error}", file=sys.stderr)
+        # Do not print exception text: network errors can contain secret webhook URLs.
+        print(
+            f"AI security review failed ({type(error).__name__}); details suppressed to protect secrets.",
+            file=sys.stderr
+        )
         return 1
 
 
