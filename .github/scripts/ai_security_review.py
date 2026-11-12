@@ -99,7 +99,21 @@ def gemini_review(diff, scanner_results):
     )
     with urllib.request.urlopen(request, timeout=90) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    response_text = payload["candidates"][0]["content"]["parts"][0]["text"]
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        prompt_feedback = payload.get("promptFeedback", {})
+        block_reason = prompt_feedback.get("blockReason", "no candidate returned")
+        raise ValueError(f"Gemini did not return a review candidate ({block_reason}).")
+
+    content = candidates[0].get("content", {})
+    parts = content.get("parts", [])
+    response_text = "".join(
+        part.get("text", "")
+        for part in parts
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    )
+    if not response_text.strip():
+        raise ValueError("Gemini returned an empty review response.")
     return json.loads(response_text)
 
 
@@ -233,8 +247,8 @@ def publish_comment(markdown):
 
 def main():
     if not API_KEY:
-        print("GEMINI_API_KEY is not configured; AI review skipped.")
-        return 0
+        print("GEMINI_API_KEY is not configured; AI review cannot run.", file=sys.stderr)
+        return 1
     if not TOKEN or not REPOSITORY or not PR_NUMBER:
         print("GitHub PR context is incomplete; cannot publish the review.")
         return 1
@@ -281,7 +295,7 @@ def main():
                 slack_response.read()
         print(markdown)
         return 0
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TypeError) as error:
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError) as error:
         print(f"AI security review failed: {error}", file=sys.stderr)
         return 1
 
