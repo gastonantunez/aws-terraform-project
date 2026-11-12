@@ -189,11 +189,32 @@ def publish_comment(markdown):
         "Content-Type": "application/json"
     }
     comments_url = f"{API_URL}/repos/{REPOSITORY}/issues/{PR_NUMBER}/comments"
-    request = urllib.request.Request(comments_url, headers=headers)
-    with urllib.request.urlopen(request, timeout=30) as response:
-        comments = json.loads(response.read().decode("utf-8"))
 
-    existing = next((item for item in comments if MARKER in item.get("body", "")), None)
+    # Paginate so an older bot comment is still found on PRs with many comments.
+    existing = None
+    page = 1
+    while True:
+        page_url = f"{comments_url}?per_page=100&page={page}"
+        request = urllib.request.Request(page_url, headers=headers)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            comments = json.loads(response.read().decode("utf-8"))
+        if not isinstance(comments, list):
+            raise ValueError("GitHub returned an invalid comments response.")
+
+        existing = next(
+            (
+                item for item in comments
+                if isinstance(item, dict)
+                and MARKER in item.get("body", "")
+                and isinstance(item.get("user"), dict)
+                and item["user"].get("login") == "github-actions[bot]"
+            ),
+            None
+        )
+        if existing or len(comments) < 100:
+            break
+        page += 1
+
     if existing:
         url = f"{API_URL}/repos/{REPOSITORY}/issues/comments/{existing['id']}"
         method = "PATCH"
@@ -209,7 +230,6 @@ def publish_comment(markdown):
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         response.read()
-
 
 def main():
     if not API_KEY:
