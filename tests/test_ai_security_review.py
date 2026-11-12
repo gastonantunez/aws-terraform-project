@@ -153,8 +153,8 @@ class MarkdownSafetyTests(unittest.TestCase):
     def test_escapes_markup_and_neutralizes_mentions(self):
         result = review.markdown_text("<script>@here</script> **hello**")
         self.assertNotIn("<script>", result)
-        self.assertIn("@\\u200bhere", result)
-        self.assertIn(r"\\*\\*hello\\*\\*", result)
+        self.assertIn("@\u200bhere", result)
+        self.assertIn(r"\*\*hello\*\*", result)
 
     def test_limits_output_length(self):
         self.assertEqual(len(review.markdown_text("x" * 100, limit=12)), 12)
