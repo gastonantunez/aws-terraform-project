@@ -100,6 +100,34 @@ class ValidateReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     review.validate_report(report)
 
+    def test_rejects_score_inconsistent_with_risk_level(self):
+        report = valid_report()
+        report["risk_score"] = 90
+        with self.assertRaises(ValueError):
+            review.validate_report(report)
+
+    def test_accepts_score_band_boundaries(self):
+        cases = [
+            (0, "LOW"),
+            (24, "LOW"),
+            (25, "MEDIUM"),
+            (49, "MEDIUM"),
+            (50, "HIGH"),
+            (79, "HIGH"),
+            (80, "CRITICAL"),
+            (100, "CRITICAL"),
+        ]
+        for score, level in cases:
+            with self.subTest(score=score, level=level):
+                report = valid_report()
+                report["risk_score"] = score
+                report["risk_level"] = level
+                if level in {"HIGH", "CRITICAL"}:
+                    report["decision"] = "REVIEW_REQUIRED"
+                elif level == "MEDIUM":
+                    report["decision"] = "REVIEW_REQUIRED"
+                self.assertIs(review.validate_report(report), report)
+
     def test_rejects_invalid_risk_level_and_decision(self):
         for field, value in (("risk_level", "SEVERE"), ("decision", "ALLOW")):
             with self.subTest(field=field):
