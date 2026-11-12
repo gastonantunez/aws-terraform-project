@@ -189,7 +189,7 @@ class SecretRedactionTests(unittest.TestCase):
             "client_secret: SuperSecret123",
             'password = "a secret value with spaces"',
             'secret_access_key: "another secret with spaces"',
-            '{"password":"json secret value","client_secret":"another json secret"}',
+            '{"password":"json secret value","client_secret":"another json secret","AWS_SECRET_ACCESS_KEY":"aws credential value"}',
             "github_pat_" + "a" * 30,
             "glpat-" + "a" * 25,
             "npm_" + "a" * 25,
@@ -212,6 +212,7 @@ class SecretRedactionTests(unittest.TestCase):
         parsed = __import__("json").loads(redacted)
         self.assertEqual(parsed["password"], "[REDACTED]")
         self.assertEqual(parsed["client_secret"], "[REDACTED]")
+        self.assertEqual(parsed["AWS_SECRET_ACCESS_KEY"], "[REDACTED]")
         self.assertNotIn("json secret value", redacted)
 
 
