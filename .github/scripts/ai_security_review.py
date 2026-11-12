@@ -36,6 +36,7 @@ def redact_sensitive(text):
         text = re.sub(pattern, replacement, text)
     return text
 
+
 def gemini_review(diff, scanner_results):
     schema = {
         "type": "OBJECT",
@@ -89,17 +90,17 @@ def gemini_review(diff, scanner_results):
             "responseSchema": schema
         }
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": API_KEY},
         method="POST"
     )
     with urllib.request.urlopen(request, timeout=90) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    text = payload["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(text)
+    response_text = payload["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(response_text)
 
 
 def render_report(report):
