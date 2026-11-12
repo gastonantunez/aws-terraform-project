@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -35,6 +36,39 @@ def valid_finding(severity="MEDIUM"):
         "impact": "It may increase exposure.",
         "recommendation": "Use a more restrictive setting.",
     }
+
+
+
+class ReadTextSafetyTests(unittest.TestCase):
+    def test_reads_only_the_requested_number_of_characters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "input.txt"
+            file_path.write_text("abcdefghij", encoding="utf-8")
+            self.assertEqual(review.read_text(file_path, 4), "abcd")
+
+    def test_returns_empty_for_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "missing.txt"
+            self.assertEqual(review.read_text(file_path, 100), "")
+
+    def test_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target.txt"
+            link = Path(directory) / "link.txt"
+            target.write_text("sensitive-data", encoding="utf-8")
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlinks are not available in this environment.")
+            self.assertEqual(review.read_text(link, 100), "")
+
+    def test_rejects_invalid_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "input.txt"
+            file_path.write_text("content", encoding="utf-8")
+            for limit in (0, -1, True, "10"):
+                with self.subTest(limit=limit):
+                    self.assertEqual(review.read_text(file_path, limit), "")
 
 
 class ValidateReportTests(unittest.TestCase):
