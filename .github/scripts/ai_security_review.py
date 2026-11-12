@@ -182,6 +182,18 @@ def validate_report(report):
     return report
 
 
+def normalize_scanner_report(report_text, report_name):
+    """Accept only valid JSON objects/arrays from scanner artifacts."""
+    try:
+        parsed = json.loads(report_text)
+    except (json.JSONDecodeError, TypeError):
+        return f"{report_name}: scanner report was not valid JSON and was excluded."
+    if not isinstance(parsed, (dict, list)):
+        return f"{report_name}: scanner report had an unexpected JSON type and was excluded."
+    # Compact serialization keeps the prompt bounded and removes irrelevant whitespace.
+    return f"{report_name}:\n" + json.dumps(parsed, ensure_ascii=True, separators=(",", ":"))
+
+
 def markdown_text(value, limit=2000):
     # Render model-provided content as plain text, not executable Markdown.
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
@@ -292,7 +304,7 @@ def main():
             # Scanner output can contain detected secret values; redact it before
             # including it in the prompt sent to the external AI provider.
             report_text = redact_sensitive(report_text)
-            scanner_parts.append(f"{report_path}:\n{report_text}")
+            scanner_parts.append(normalize_scanner_report(report_text, report_path))
     scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
     try:
