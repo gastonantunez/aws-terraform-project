@@ -12,6 +12,8 @@ TOKEN = os.getenv("GITHUB_TOKEN", "")
 REPOSITORY = os.getenv("GITHUB_REPOSITORY", "")
 PR_NUMBER = os.getenv("PR_NUMBER", "")
 API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com")
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+PR_URL = os.getenv("PR_URL", f"https://github.com/{REPOSITORY}/pull/{PR_NUMBER}")
 
 
 def read_text(path, limit):
@@ -180,7 +182,7 @@ def main():
                 "text": (
                     f":rotating_light: *AI Security Review — {report.get('risk_level', 'UNKNOWN')}*\\n"
                     f"Repository: {REPOSITORY}\\n"
-                    f"Pull Request: {API_URL.replace('api.github.com', 'github.com')}/{REPOSITORY}/pull/{PR_NUMBER}\\n"
+                    f"Pull Request: {PR_URL}\\n"
                     f"Risk score: {report.get('risk_score', 'N/A')}/100\\n"
                     f"Decision: {report.get('decision', 'REVIEW_REQUIRED')}"
                 )
