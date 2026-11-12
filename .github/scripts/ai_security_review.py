@@ -159,7 +159,7 @@ def markdown_text(value, limit=2000):
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
     value = " ".join(value.split())[:limit]
     value = value.replace("@", "@\u200b")
-    for char in r"\`*_{}[]()#+-.!|>":
+    for char in r"\`*_{}[]()#+-.!|<>":
         value = value.replace(char, "\\" + char)
     return value
 
