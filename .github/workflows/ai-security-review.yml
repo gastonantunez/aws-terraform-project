@@ -1,0 +1,84 @@
+name: AI Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-security-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  static-security:
+    name: Static security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Run Trivy IaC and configuration scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL,MEDIUM
+          exit-code: '0'
+          format: json
+          output: trivy-config.json
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-config-report
+          path: trivy-config.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ai-review:
+    name: Gemini AI review
+    runs-on: ubuntu-latest
+    needs: static-security
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Build review diff
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch origin "$BASE_REF" --depth=1
+          git diff --no-ext-diff --unified=5 "origin/$BASE_REF...HEAD" -- . ':!*.lock' > pr.diff
+          echo "Diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Run AI security review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-2.5-flash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: python .github/scripts/ai_security_review.py
+
+      - name: Upload AI review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-security-review
+          path: ai-security-review.md
+          if-no-files-found: ignore
+          retention-days: 7
