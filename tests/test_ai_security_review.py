@@ -248,8 +248,8 @@ class MarkdownSafetyTests(unittest.TestCase):
         report["findings"][0]["title"] = "<img src=x>"
         rendered = review.render_report(report)
         self.assertIn(review.MARKER, rendered)
-        self.assertIn(r"\\<img", rendered)
-        self.assertNotIn("<img", rendered.replace(r"\\<img", ""))
+        self.assertIn(r"\<img", rendered)
+        self.assertNotIn("<img", rendered.replace(r"\<img", ""))
         self.assertIn("AI Security Review", rendered)
 
 
