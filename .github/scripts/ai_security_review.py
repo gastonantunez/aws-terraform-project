@@ -166,8 +166,8 @@ def main():
     for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
         report_text = read_text(report_path, 20000)
         if report_text:
-            scanner_parts.append(f"{report_path}:\\n{report_text}")
-    scanner = "\\n\\n".join(scanner_parts) or "No static scanner reports were available."
+            scanner_parts.append(f"{report_path}:\n{report_text}")
+    scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
     try:
         report = gemini_review(diff, scanner)
@@ -180,10 +180,10 @@ def main():
         ):
             slack_payload = {
                 "text": (
-                    f":rotating_light: *AI Security Review — {report.get('risk_level', 'UNKNOWN')}*\\n"
-                    f"Repository: {REPOSITORY}\\n"
-                    f"Pull Request: {PR_URL}\\n"
-                    f"Risk score: {report.get('risk_score', 'N/A')}/100\\n"
+                    f":rotating_light: *AI Security Review — {report.get('risk_level', 'UNKNOWN')}*\n"
+                    f"Repository: {REPOSITORY}\n"
+                    f"Pull Request: {PR_URL}\n"
+                    f"Risk score: {report.get('risk_score', 'N/A')}/100\n"
                     f"Decision: {report.get('decision', 'REVIEW_REQUIRED')}"
                 )
             }
