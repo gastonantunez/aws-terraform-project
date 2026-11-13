@@ -1,4 +1,5 @@
 name: AI Security Integration Test
+# Re-run the live Gemini 3.8 integration review.
 
 on:
   push:
