@@ -216,6 +216,28 @@ class SecretRedactionTests(unittest.TestCase):
         self.assertNotIn("json secret value", redacted)
 
 
+class ScannerCoverageTests(unittest.TestCase):
+    def test_missing_scanner_report_prevents_pass(self):
+        report = valid_report()
+        result = review.enforce_manual_review_when_scanners_incomplete(report)
+        self.assertEqual(result["risk_score"], 25)
+        self.assertEqual(result["risk_level"], "MEDIUM")
+        self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+        self.assertIn("static scanner reports", result["summary"])
+
+    def test_incomplete_scanners_do_not_downgrade_high_risk(self):
+        report = valid_report()
+        report.update(risk_score=75, risk_level="HIGH", decision="REVIEW_REQUIRED")
+        result = review.enforce_manual_review_when_scanners_incomplete(report)
+        self.assertEqual(result["risk_score"], 75)
+        self.assertEqual(result["risk_level"], "HIGH")
+        self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+
+    def test_complete_scanner_reports_are_not_subject_to_override(self):
+        report = valid_report()
+        self.assertEqual(report["decision"], "PASS")
+
+
 class ScannerNormalizationTests(unittest.TestCase):
     def test_accepts_json_object_and_array(self):
         self.assertIn('"status":"ok"', review.normalize_scanner_report('{"status":"ok"}', "trivy"))
