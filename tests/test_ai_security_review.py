@@ -400,6 +400,46 @@ class BoundedResponseTests(unittest.TestCase):
                 review.gemini_review("diff", "scanner")
 
 
+class GeminiRetryTests(unittest.TestCase):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def test_retries_timeout_and_uses_extended_timeout(self):
+        with patch.object(
+            review.urllib.request,
+            "urlopen",
+            side_effect=[TimeoutError("temporary timeout"), self.FakeResponse()],
+        ) as mocked:
+            with patch.object(review.time, "sleep") as sleep:
+                response = review.open_gemini_request(object())
+        self.assertIsInstance(response, self.FakeResponse)
+        self.assertEqual(mocked.call_count, 2)
+        self.assertEqual(mocked.call_args_list[0].kwargs["timeout"], 180)
+        sleep.assert_called_once_with(5)
+
+    def test_does_not_retry_http_errors(self):
+        error = review.urllib.error.HTTPError(
+            "https://example.invalid", 404, "not found", {}, None
+        )
+        with patch.object(review.urllib.request, "urlopen", side_effect=error) as mocked:
+            with self.assertRaises(review.urllib.error.HTTPError):
+                review.open_gemini_request(object())
+        mocked.assert_called_once()
+
+    def test_stops_after_configured_timeout_attempts(self):
+        with patch.object(
+            review.urllib.request, "urlopen", side_effect=TimeoutError("timeout")
+        ) as mocked:
+            with patch.object(review.time, "sleep"):
+                with self.assertRaises(TimeoutError):
+                    review.open_gemini_request(object(), attempts=2)
+        self.assertEqual(mocked.call_count, 2)
+
+
 class FailureStatusTests(unittest.TestCase):
     class FakeResponse:
         def read(self, limit=-1):
