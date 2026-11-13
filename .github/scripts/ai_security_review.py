@@ -500,7 +500,7 @@ def main():
             if "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
                 scanner_reports_complete = False
             scanner_parts.append(normalized_report)
-        scanner = "\\n\\n".join(scanner_parts) or "No static scanner reports were available."
+        scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
         report = validate_report(gemini_review(diff, scanner))
         if not scanner_reports_complete:
@@ -517,10 +517,10 @@ def main():
         ):
             slack_payload = {
                 "text": (
-                    f":rotating_light: *AI Security Review — {report['risk_level']}*\\n"
-                    f"Repository: {REPOSITORY}\\n"
-                    f"Pull Request: {PR_URL}\\n"
-                    f"Risk score: {report['risk_score']}/100\\n"
+                    f":rotating_light: *AI Security Review — {report['risk_level']}*\n"
+                    f"Repository: {REPOSITORY}\n"
+                    f"Pull Request: {PR_URL}\n"
+                    f"Risk score: {report['risk_score']}/100\n"
                     f"Decision: {report['decision']}"
                 )
             }
