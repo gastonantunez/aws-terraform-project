@@ -72,6 +72,39 @@ class ReadTextSafetyTests(unittest.TestCase):
                     self.assertEqual(review.read_text(file_path, limit), "")
 
 
+class DiffCompletenessTests(unittest.TestCase):
+    def test_reports_when_diff_exceeds_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "pr.diff"
+            file_path.write_text("x" * 11, encoding="utf-8")
+            content, truncated = review.read_text_with_truncation(file_path, 10)
+            self.assertEqual(content, "x" * 10)
+            self.assertTrue(truncated)
+
+    def test_does_not_mark_diff_at_limit_as_truncated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "pr.diff"
+            file_path.write_text("x" * 10, encoding="utf-8")
+            content, truncated = review.read_text_with_truncation(file_path, 10)
+            self.assertEqual(content, "x" * 10)
+            self.assertFalse(truncated)
+
+    def test_missing_diff_prevents_pass(self):
+        result = review.enforce_manual_review_when_diff_incomplete(valid_report())
+        self.assertEqual(result["risk_score"], 25)
+        self.assertEqual(result["risk_level"], "MEDIUM")
+        self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+        self.assertIn("pull-request diff", result["summary"])
+
+    def test_incomplete_diff_does_not_downgrade_high_risk(self):
+        report = valid_report()
+        report.update(risk_score=75, risk_level="HIGH", decision="REVIEW_REQUIRED")
+        result = review.enforce_manual_review_when_diff_incomplete(report)
+        self.assertEqual(result["risk_score"], 75)
+        self.assertEqual(result["risk_level"], "HIGH")
+        self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+
+
 class ValidateReportTests(unittest.TestCase):
     def test_accepts_valid_report_without_findings(self):
         report = valid_report()
