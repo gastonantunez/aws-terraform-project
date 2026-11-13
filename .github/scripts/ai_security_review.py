@@ -62,14 +62,18 @@ def read_limited_response(response, limit):
 
 
 def open_gemini_request(request, attempts=3, timeout=180):
-    """Retry transient network timeouts without masking API or validation errors."""
+    """Retry transient Gemini HTTP and network failures, not permanent API errors."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
         raise ValueError("Gemini retry attempts must be a positive integer.")
+
+    retryable_http_statuses = {408, 429, 500, 502, 503, 504}
     for attempt in range(attempts):
         try:
             return urllib.request.urlopen(request, timeout=timeout)
-        except urllib.error.HTTPError:
-            raise
+        except urllib.error.HTTPError as error:
+            if error.code not in retryable_http_statuses or attempt == attempts - 1:
+                raise
+            error.close()
         except urllib.error.URLError as error:
             if not isinstance(error.reason, (TimeoutError, socket.timeout)):
                 raise
