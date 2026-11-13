@@ -476,6 +476,7 @@ def publish_failure_status(commit_sha):
 
 def main():
     reviewed_sha = os.getenv("REVIEWED_SHA", "")
+    stage = "initialization"
     try:
         if not API_KEY:
             raise ValueError("GEMINI_API_KEY is not configured.")
@@ -502,6 +503,7 @@ def main():
             scanner_parts.append(normalized_report)
         scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
+        stage = "Gemini API request and report validation"
         report = validate_report(gemini_review(diff, scanner))
         if not scanner_reports_complete:
             report = enforce_manual_review_when_scanners_incomplete(report)
@@ -510,6 +512,7 @@ def main():
 
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
+        stage = "publish GitHub PR comment"
         publish_comment(markdown)
 
         if SLACK_WEBHOOK_URL and (
@@ -536,14 +539,16 @@ def main():
             except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
                 print("Slack notification failed; GitHub review result is unaffected.", file=sys.stderr)
 
+        stage = "publish GitHub commit status"
         publish_commit_status(
             reviewed_sha, report["decision"], report["risk_level"], report["risk_score"]
         )
         print(markdown)
         return 0
     except Exception as error:
+        http_status = f", HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else ""
         print(
-            f"AI security review failed ({type(error).__name__}); details suppressed to protect secrets.",
+            f"AI security review failed during {stage} ({type(error).__name__}{http_status}); details suppressed to protect secrets.",
             file=sys.stderr,
         )
         if not publish_failure_status(reviewed_sha):
