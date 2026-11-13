@@ -445,81 +445,112 @@ def publish_commit_status(commit_sha, decision, risk_level, score):
         read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
 
 
-def main():
-    if not API_KEY:
-        print("GEMINI_API_KEY is not configured; AI review cannot run.", file=sys.stderr)
-        return 1
-    if not TOKEN or not REPOSITORY or not PR_NUMBER:
-        print("GitHub PR context is incomplete; cannot publish the review.")
-        return 1
 
-    raw_diff, diff_truncated = read_text_with_truncation("pr.diff", 60000)
-    diff_complete = bool(raw_diff.strip()) and not diff_truncated
-    diff = redact_sensitive(raw_diff)
-    if not raw_diff.strip():
-        diff = "No textual diff was available. Review is limited."
-
-    scanner_parts = []
-    scanner_reports_complete = True
-    for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
-        report_text = read_text(report_path, 20000)
-        if not report_text:
-            scanner_reports_complete = False
-            continue
-        # Scanner output can contain detected secret values; redact it before
-        # including it in the prompt sent to the external AI provider.
-        report_text = redact_sensitive(report_text)
-        normalized_report = normalize_scanner_report(report_text, report_path)
-        if "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
-            scanner_reports_complete = False
-        scanner_parts.append(normalized_report)
-    scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
-
+def publish_failure_status(commit_sha):
+    """Best-effort error status when the automated review cannot complete."""
+    if not TOKEN or not REPOSITORY or not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        return False
+    payload = {
+        "state": "error",
+        "context": "AI Security Review",
+        "description": "Automated security review failed; manual review required.",
+        "target_url": PR_URL,
+    }
+    request = urllib.request.Request(
+        f"{API_URL}/repos/{REPOSITORY}/statuses/{commit_sha}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {TOKEN}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
     try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
+        return True
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, TypeError, OSError):
+        return False
+
+def main():
+    reviewed_sha = os.getenv("REVIEWED_SHA", "")
+    try:
+        if not API_KEY:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+        if not TOKEN or not REPOSITORY or not PR_NUMBER:
+            raise ValueError("GitHub PR context is incomplete.")
+
+        raw_diff, diff_truncated = read_text_with_truncation("pr.diff", 60000)
+        diff_complete = bool(raw_diff.strip()) and not diff_truncated
+        diff = redact_sensitive(raw_diff)
+        if not raw_diff.strip():
+            diff = "No textual diff was available. Review is limited."
+
+        scanner_parts = []
+        scanner_reports_complete = True
+        for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
+            report_text = read_text(report_path, 20000)
+            if not report_text:
+                scanner_reports_complete = False
+                continue
+            report_text = redact_sensitive(report_text)
+            normalized_report = normalize_scanner_report(report_text, report_path)
+            if "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
+                scanner_reports_complete = False
+            scanner_parts.append(normalized_report)
+        scanner = "\\n\\n".join(scanner_parts) or "No static scanner reports were available."
+
         report = validate_report(gemini_review(diff, scanner))
         if not scanner_reports_complete:
             report = enforce_manual_review_when_scanners_incomplete(report)
         if not diff_complete:
             report = enforce_manual_review_when_diff_incomplete(report)
+
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
         publish_comment(markdown)
+
         if SLACK_WEBHOOK_URL and (
-            report.get("decision") == "BLOCK"
-            or report.get("risk_level") in ("HIGH", "CRITICAL")
+            report["decision"] == "BLOCK" or report["risk_level"] in ("HIGH", "CRITICAL")
         ):
             slack_payload = {
                 "text": (
-                    f":rotating_light: *AI Security Review — {report.get('risk_level', 'UNKNOWN')}*\n"
-                    f"Repository: {REPOSITORY}\n"
-                    f"Pull Request: {PR_URL}\n"
-                    f"Risk score: {report.get('risk_score', 'N/A')}/100\n"
-                    f"Decision: {report.get('decision', 'REVIEW_REQUIRED')}"
+                    f":rotating_light: *AI Security Review — {report['risk_level']}*\\n"
+                    f"Repository: {REPOSITORY}\\n"
+                    f"Pull Request: {PR_URL}\\n"
+                    f"Risk score: {report['risk_score']}/100\\n"
+                    f"Decision: {report['decision']}"
                 )
             }
             slack_request = urllib.request.Request(
                 SLACK_WEBHOOK_URL,
                 data=json.dumps(slack_payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
-                method="POST"
+                method="POST",
             )
-            with urllib.request.urlopen(slack_request, timeout=20) as slack_response:
-                read_limited_response(slack_response, 64_000)
-        reviewed_sha = os.getenv("REVIEWED_SHA", "")
+            try:
+                with urllib.request.urlopen(slack_request, timeout=20) as slack_response:
+                    read_limited_response(slack_response, 64_000)
+            except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+                print("Slack notification failed; GitHub review result is unaffected.", file=sys.stderr)
+
         publish_commit_status(
-            reviewed_sha,
-            report["decision"],
-            report["risk_level"],
-            report["risk_score"],
+            reviewed_sha, report["decision"], report["risk_level"], report["risk_score"]
         )
         print(markdown)
         return 0
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError, OSError, RecursionError) as error:
-        # Do not print exception text: network errors can contain secret webhook URLs.
+    except (
+        urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError,
+        ValueError, TypeError, OSError, RecursionError
+    ) as error:
         print(
             f"AI security review failed ({type(error).__name__}); details suppressed to protect secrets.",
-            file=sys.stderr
+            file=sys.stderr,
         )
+        if not publish_failure_status(reviewed_sha):
+            print("Could not publish the failure status to GitHub; manual review is required.", file=sys.stderr)
         return 1
 
 
