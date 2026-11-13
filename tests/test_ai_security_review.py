@@ -400,6 +400,55 @@ class BoundedResponseTests(unittest.TestCase):
                 review.gemini_review("diff", "scanner")
 
 
+class FailureStatusTests(unittest.TestCase):
+    class FakeResponse:
+        def read(self, limit=-1):
+            return b"{}"[:limit] if limit >= 0 else b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def test_failure_status_publishes_error_state(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            return self.FakeResponse()
+
+        with patch.object(review.urllib.request, "urlopen", side_effect=fake_urlopen):
+            self.assertTrue(review.publish_failure_status("d" * 40))
+
+        payload = __import__("json").loads(captured["request"].data.decode("utf-8"))
+        self.assertEqual(captured["request"].get_method(), "POST")
+        self.assertEqual(payload["state"], "error")
+        self.assertEqual(payload["context"], "AI Security Review")
+
+    def test_failure_status_rejects_invalid_sha_without_network_call(self):
+        with patch.object(review.urllib.request, "urlopen") as mocked:
+            self.assertFalse(review.publish_failure_status("invalid-sha"))
+        mocked.assert_not_called()
+
+    def test_failure_status_returns_false_when_github_is_unavailable(self):
+        with patch.object(
+            review.urllib.request, "urlopen",
+            side_effect=review.urllib.error.URLError("network unavailable"),
+        ):
+            self.assertFalse(review.publish_failure_status("e" * 40))
+
+    def test_missing_gemini_key_attempts_failure_status(self):
+        with patch.object(review, "API_KEY", ""), \\
+             patch.object(review, "publish_failure_status", return_value=True) as publish_failure, \\
+             patch.dict(review.os.environ, {"REVIEWED_SHA": "f" * 40}), \\
+             patch("sys.stderr"):
+            result = review.main()
+
+        self.assertEqual(result, 1)
+        publish_failure.assert_called_once_with("f" * 40)
+
+
 class ReportSizeTests(unittest.TestCase):
     def test_rendered_comment_stays_under_github_limit(self):
         report = valid_report()
