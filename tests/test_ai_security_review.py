@@ -421,14 +421,45 @@ class GeminiRetryTests(unittest.TestCase):
         self.assertEqual(mocked.call_args_list[0].kwargs["timeout"], 180)
         sleep.assert_called_once_with(5)
 
-    def test_does_not_retry_http_errors(self):
-        error = review.urllib.error.HTTPError(
-            "https://example.invalid", 404, "not found", {}, None
+    def test_retries_transient_http_503(self):
+        temporary_error = review.urllib.error.HTTPError(
+            "https://example.invalid", 503, "service unavailable", {}, None
         )
-        with patch.object(review.urllib.request, "urlopen", side_effect=error) as mocked:
-            with self.assertRaises(review.urllib.error.HTTPError):
-                review.open_gemini_request(object())
-        mocked.assert_called_once()
+        success = self.FakeResponse()
+        with patch.object(
+            review.urllib.request, "urlopen", side_effect=[temporary_error, success]
+        ) as mocked:
+            with patch.object(review.time, "sleep") as sleep:
+                response = review.open_gemini_request(object())
+        self.assertIs(response, success)
+        self.assertEqual(mocked.call_count, 2)
+        sleep.assert_called_once_with(5)
+
+    def test_retries_rate_limit_429(self):
+        temporary_error = review.urllib.error.HTTPError(
+            "https://example.invalid", 429, "rate limited", {}, None
+        )
+        with patch.object(
+            review.urllib.request, "urlopen",
+            side_effect=[temporary_error, self.FakeResponse()],
+        ) as mocked:
+            with patch.object(review.time, "sleep"):
+                response = review.open_gemini_request(object())
+        self.assertIsInstance(response, self.FakeResponse)
+        self.assertEqual(mocked.call_count, 2)
+
+    def test_does_not_retry_permanent_http_errors(self):
+        for status in (400, 401, 403, 404):
+            error = review.urllib.error.HTTPError(
+                "https://example.invalid", status, "permanent error", {}, None
+            )
+            with self.subTest(status=status):
+                with patch.object(
+                    review.urllib.request, "urlopen", side_effect=error
+                ) as mocked:
+                    with self.assertRaises(review.urllib.error.HTTPError):
+                        review.open_gemini_request(object())
+                mocked.assert_called_once()
 
     def test_stops_after_configured_timeout_attempts(self):
         with patch.object(
