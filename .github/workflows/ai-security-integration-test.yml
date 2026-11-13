@@ -1,0 +1,128 @@
+name: AI Security Integration Test
+# Re-run the live Gemini 3.8 integration review.
+
+on:
+  push:
+    branches:
+      - feature/ai-security-review
+
+permissions: {}
+
+concurrency:
+  group: ai-security-integration-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    name: Real scanners and Gemini review
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      statuses: write
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify this commit belongs to PR #2
+        id: verify-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          pr_json="$(gh api "repos/$GH_REPO/pulls/2")"
+          pr_head_sha="$(jq -r '.head.sha' <<< "$pr_json")"
+          pr_url="$(jq -r '.html_url' <<< "$pr_json")"
+          if [ "$pr_head_sha" != "$EXPECTED_SHA" ]; then
+            echo "The pushed commit is not the current head of PR #2; refusing to comment or publish a status."
+            exit 1
+          fi
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "Verified PR #2 head: $pr_head_sha"
+
+      - name: Prepare scanner report directory
+        run: mkdir -p reports
+
+      - name: Run Trivy IaC and configuration scan
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL,MEDIUM
+          exit-code: '0'
+          format: json
+          output: reports/trivy-config.json
+
+      - name: Run Checkov Terraform scan
+        id: checkov
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/tf" -w /tf bridgecrew/checkov:2.0.930 -d /tf --framework terraform --soft-fail -o json > reports/checkov.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("reports/checkov.json").read_text(encoding="utf-8"))
+          if not isinstance(report, dict):
+              raise SystemExit("Checkov did not produce a JSON object.")
+          print("Checkov JSON report generated and validated.")
+          print(f"Passed: {report.get('summary', {}).get('passed', 0)}; Failed: {report.get('summary', {}).get('failed', 0)}")
+          PY
+
+      - name: Diagnose scanner report files
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ("trivy-config.json", "checkov.json"):
+              path = Path("reports") / name
+              print(f"{name}: exists={path.is_file()} size={path.stat().st_size if path.is_file() else 0}")
+              if path.is_file():
+                  try:
+                      json.loads(path.read_text(encoding="utf-8"))
+                      print(f"{name}: valid JSON")
+                  except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                      print(f"{name}: invalid JSON ({type(error).__name__})")
+          PY
+
+      - name: Build pull request diff
+        if: steps.verify-pr.outcome == 'success'
+        run: |
+          git fetch --no-tags origin main
+          git diff --no-ext-diff --unified=5 origin/main...HEAD -- . ':!*.lock' > pr.diff
+          echo "Diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Run Gemini security review and publish to PR #2
+        id: gemini-review
+        if: always() && steps.verify-pr.outcome == 'success'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.8-flash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: '2'
+          REVIEWED_SHA: ${{ github.sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          PR_URL: ${{ steps.verify-pr.outputs.url }}
+        run: python .github/scripts/ai_security_review.py
+
+      - name: Upload integration test report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ai-security-integration-report
+          path: |
+            ai-security-review.md
+            reports/*.json
+          if-no-files-found: ignore
+          retention-days: 7
