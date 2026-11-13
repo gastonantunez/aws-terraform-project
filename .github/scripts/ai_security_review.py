@@ -43,6 +43,14 @@ def read_text(path, limit):
             os.close(descriptor)
 
 
+def read_text_with_truncation(path, limit):
+    """Read a bounded text file and report whether content exceeded the limit."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return "", False
+    content = read_text(path, limit + 1)
+    return content[:limit], len(content) > limit
+
+
 def read_limited_response(response, limit):
     """Read at most limit bytes and reject oversized HTTP responses."""
     data = response.read(limit + 1)
@@ -278,6 +286,22 @@ def enforce_manual_review_when_scanners_incomplete(report):
     return validate_report(report)
 
 
+def enforce_manual_review_when_diff_incomplete(report):
+    """Prevent an automatic PASS when the PR diff is missing or truncated."""
+    report = dict(report)
+    report["risk_score"] = max(report["risk_score"], 25)
+    if report["risk_level"] == "LOW":
+        report["risk_level"] = "MEDIUM"
+    if report["decision"] == "PASS":
+        report["decision"] = "REVIEW_REQUIRED"
+    note = (
+        "Automated approval was disabled because the pull-request diff was missing "
+        "or exceeded the review size limit. Review the complete diff manually."
+    )
+    report["summary"] = (report["summary"] + " " + note)[:4000]
+    return validate_report(report)
+
+
 def markdown_text(value, limit=2000):
     # Render model-provided content as plain text, not executable Markdown.
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
@@ -394,8 +418,10 @@ def main():
         print("GitHub PR context is incomplete; cannot publish the review.")
         return 1
 
-    diff = redact_sensitive(read_text("pr.diff", 60000))
-    if not diff.strip():
+    raw_diff, diff_truncated = read_text_with_truncation("pr.diff", 60000)
+    diff_complete = bool(raw_diff.strip()) and not diff_truncated
+    diff = redact_sensitive(raw_diff)
+    if not raw_diff.strip():
         diff = "No textual diff was available. Review is limited."
 
     scanner_parts = []
@@ -418,6 +444,8 @@ def main():
         report = validate_report(gemini_review(diff, scanner))
         if not scanner_reports_complete:
             report = enforce_manual_review_when_scanners_incomplete(report)
+        if not diff_complete:
+            report = enforce_manual_review_when_diff_incomplete(report)
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
         publish_comment(markdown)
