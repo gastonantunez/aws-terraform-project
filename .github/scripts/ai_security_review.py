@@ -62,8 +62,55 @@ def read_limited_response(response, limit):
     return data
 
 
-def open_gemini_request(request, attempts=4, timeout=180):
-    """Retry transient Gemini HTTP and network failures with exponential backoff."""
+class GeminiQuotaError(RuntimeError):
+    """A Gemini 429 that must not be retried automatically."""
+
+    def __init__(self, category):
+        super().__init__(category)
+        self.category = category
+
+
+def classify_gemini_429(error_body):
+    """Classify Gemini 429 responses without logging their potentially sensitive body."""
+    try:
+        payload = json.loads(error_body.decode("utf-8", errors="replace"))
+    except (AttributeError, TypeError, ValueError):
+        payload = {}
+
+    fragments = []
+
+    def collect(value):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                fragments.append(str(key).lower())
+                collect(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                collect(nested)
+        elif isinstance(value, str):
+            fragments.append(value.lower())
+
+    collect(payload)
+    details = " ".join(fragments)
+
+    daily_markers = (
+        "quota_exceeded", "quota_exhausted", "requests per day",
+        "daily quota", "per-day", "rpd",
+    )
+    rate_markers = (
+        "rate_limit_exceeded", "too_many_requests", "rate limit",
+        "requests per minute", "tokens per minute", "per-minute",
+        "per-second", "rpm", "tpm",
+    )
+    if any(marker in details for marker in daily_markers):
+        return "daily quota exhausted"
+    if any(marker in details for marker in rate_markers):
+        return "short-term rate limit"
+    return "unclassified HTTP 429; stopped to avoid wasting quota"
+
+
+def open_gemini_request(request, attempts=3, timeout=180):
+    """Retry only transient failures; never retry a daily or unknown Gemini 429."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
         raise ValueError("Gemini retry attempts must be a positive integer.")
 
@@ -73,13 +120,28 @@ def open_gemini_request(request, attempts=4, timeout=180):
         try:
             return urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as error:
-            if error.code not in retryable_http_statuses or attempt == attempts - 1:
+            if error.code == 429:
+                try:
+                    error_body = error.read(65536)
+                except OSError:
+                    error_body = b""
+                category = classify_gemini_429(error_body)
+                if category != "short-term rate limit":
+                    error.close()
+                    raise GeminiQuotaError(category) from error
+                try:
+                    retry_after = float(error.headers.get("Retry-After", ""))
+                except (TypeError, ValueError):
+                    retry_after = None
+                error.close()
+            elif error.code not in retryable_http_statuses or attempt == attempts - 1:
                 raise
-            try:
-                retry_after = float(error.headers.get("Retry-After", ""))
-            except (TypeError, ValueError):
-                retry_after = None
-            error.close()
+            else:
+                try:
+                    retry_after = float(error.headers.get("Retry-After", ""))
+                except (TypeError, ValueError):
+                    retry_after = None
+                error.close()
         except urllib.error.URLError as error:
             if not isinstance(error.reason, (TimeoutError, socket.timeout)):
                 raise
@@ -587,11 +649,18 @@ def main():
         print(markdown)
         return 0
     except Exception as error:
-        http_status = f", HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else ""
-        print(
-            f"AI security review failed during {stage} ({type(error).__name__}{http_status}); details suppressed to protect secrets.",
-            file=sys.stderr,
-        )
+        if isinstance(error, GeminiQuotaError):
+            print(
+                f"AI security review stopped during {stage}: {error.category}. "
+                "No further Gemini retries were made; wait for the applicable quota reset.",
+                file=sys.stderr,
+            )
+        else:
+            http_status = f", HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else ""
+            print(
+                f"AI security review failed during {stage} ({type(error).__name__}{http_status}); details suppressed to protect secrets.",
+                file=sys.stderr,
+            )
         if not publish_failure_status(reviewed_sha):
             print("Could not publish the failure status to GitHub; manual review is required.", file=sys.stderr)
         return 1

@@ -437,19 +437,54 @@ class GeminiRetryTests(unittest.TestCase):
         self.assertEqual(mocked.call_count, 2)
         sleep.assert_called_once_with(2)
 
-    def test_retries_rate_limit_429(self):
+    def test_retries_explicit_short_term_rate_limit_429(self):
+        import io
+        body = b'{"error":{"code":"rate_limit_exceeded","message":"Requests per minute exceeded"}}'
         temporary_error = review.urllib.error.HTTPError(
-            "https://example.invalid", 429, "rate limited", {}, None
+            "https://example.invalid", 429, "rate limited", {"Retry-After": "3"}, io.BytesIO(body)
         )
         with patch.object(
             review.urllib.request, "urlopen",
             side_effect=[temporary_error, self.FakeResponse()],
         ) as mocked:
-            with patch.object(review.time, "sleep"):
+            with patch.object(review.time, "sleep") as sleep:
                 with patch.object(review.random, "uniform", return_value=0):
                     response = review.open_gemini_request(object())
         self.assertIsInstance(response, self.FakeResponse)
         self.assertEqual(mocked.call_count, 2)
+        sleep.assert_called_once_with(3)
+
+    def test_does_not_retry_daily_quota_429(self):
+        import io
+        body = b'{"error":{"code":"quota_exceeded","message":"Daily quota exceeded"}}'
+        quota_error = review.urllib.error.HTTPError(
+            "https://example.invalid", 429, "quota exhausted", {}, io.BytesIO(body)
+        )
+        with patch.object(review.urllib.request, "urlopen", side_effect=quota_error) as mocked:
+            with patch.object(review.time, "sleep") as sleep:
+                with self.assertRaises(review.GeminiQuotaError) as raised:
+                    review.open_gemini_request(object())
+        self.assertEqual(raised.exception.category, "daily quota exhausted")
+        mocked.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_does_not_retry_unclassified_429(self):
+        import io
+        quota_error = review.urllib.error.HTTPError(
+            "https://example.invalid", 429, "resource exhausted", {},
+            io.BytesIO(b'{"error":{"status":"RESOURCE_EXHAUSTED"}}')
+        )
+        with patch.object(review.urllib.request, "urlopen", side_effect=quota_error) as mocked:
+            with patch.object(review.time, "sleep") as sleep:
+                with self.assertRaises(review.GeminiQuotaError) as raised:
+                    review.open_gemini_request(object())
+        self.assertIn("stopped to avoid wasting quota", raised.exception.category)
+        mocked.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_classifies_nested_daily_quota_reason(self):
+        body = b'{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"reason":"QUOTA_EXCEEDED","metadata":{"quotaMetric":"requests_per_day"}}]}}'
+        self.assertEqual(review.classify_gemini_429(body), "daily quota exhausted")
 
     def test_does_not_retry_permanent_http_errors(self):
         for status in (400, 401, 403, 404):
