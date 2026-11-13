@@ -450,6 +450,20 @@ class FailureStatusTests(unittest.TestCase):
         self.assertEqual(result, 1)
         publish_failure.assert_called_once_with("f" * 40)
 
+    def test_unexpected_runtime_error_attempts_failure_status(self):
+        with patch.object(review, "API_KEY", "configured"):
+            with patch.object(review, "TOKEN", "test-token"):
+                with patch.object(review, "REPOSITORY", "owner/repo"):
+                    with patch.object(review, "PR_NUMBER", "2"):
+                        with patch.object(review, "gemini_review", side_effect=RuntimeError("unexpected")):
+                            with patch.object(review, "publish_failure_status", return_value=True) as publish_failure:
+                                with patch.dict(review.os.environ, {"REVIEWED_SHA": "a" * 40}):
+                                    with patch("sys.stderr"):
+                                        result = review.main()
+
+        self.assertEqual(result, 1)
+        publish_failure.assert_called_once_with("a" * 40)
+
 
 class ReportSizeTests(unittest.TestCase):
     def test_rendered_comment_stays_under_github_limit(self):
