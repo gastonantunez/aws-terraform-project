@@ -439,11 +439,11 @@ class FailureStatusTests(unittest.TestCase):
             self.assertFalse(review.publish_failure_status("e" * 40))
 
     def test_missing_gemini_key_attempts_failure_status(self):
-        with patch.object(review, "API_KEY", ""), \\
-             patch.object(review, "publish_failure_status", return_value=True) as publish_failure, \\
-             patch.dict(review.os.environ, {"REVIEWED_SHA": "f" * 40}), \\
-             patch("sys.stderr"):
-            result = review.main()
+        with patch.object(review, "API_KEY", ""):
+            with patch.object(review, "publish_failure_status", return_value=True) as publish_failure:
+                with patch.dict(review.os.environ, {"REVIEWED_SHA": "f" * 40}):
+                    with patch("sys.stderr"):
+                        result = review.main()
 
         self.assertEqual(result, 1)
         publish_failure.assert_called_once_with("f" * 40)
