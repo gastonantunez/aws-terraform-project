@@ -408,20 +408,21 @@ class GeminiRetryTests(unittest.TestCase):
         def __exit__(self, exc_type, exc, traceback):
             return False
 
-    def test_retries_timeout_and_uses_extended_timeout(self):
+    def test_retries_timeout_with_exponential_backoff_and_extended_timeout(self):
         with patch.object(
             review.urllib.request,
             "urlopen",
             side_effect=[TimeoutError("temporary timeout"), self.FakeResponse()],
         ) as mocked:
             with patch.object(review.time, "sleep") as sleep:
-                response = review.open_gemini_request(object())
+                with patch.object(review.random, "uniform", return_value=0):
+                    response = review.open_gemini_request(object())
         self.assertIsInstance(response, self.FakeResponse)
         self.assertEqual(mocked.call_count, 2)
         self.assertEqual(mocked.call_args_list[0].kwargs["timeout"], 180)
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(2)
 
-    def test_retries_transient_http_503(self):
+    def test_retries_transient_http_503_with_exponential_backoff(self):
         temporary_error = review.urllib.error.HTTPError(
             "https://example.invalid", 503, "service unavailable", {}, None
         )
@@ -430,10 +431,11 @@ class GeminiRetryTests(unittest.TestCase):
             review.urllib.request, "urlopen", side_effect=[temporary_error, success]
         ) as mocked:
             with patch.object(review.time, "sleep") as sleep:
-                response = review.open_gemini_request(object())
+                with patch.object(review.random, "uniform", return_value=0):
+                    response = review.open_gemini_request(object())
         self.assertIs(response, success)
         self.assertEqual(mocked.call_count, 2)
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(2)
 
     def test_retries_rate_limit_429(self):
         temporary_error = review.urllib.error.HTTPError(
@@ -444,7 +446,8 @@ class GeminiRetryTests(unittest.TestCase):
             side_effect=[temporary_error, self.FakeResponse()],
         ) as mocked:
             with patch.object(review.time, "sleep"):
-                response = review.open_gemini_request(object())
+                with patch.object(review.random, "uniform", return_value=0):
+                    response = review.open_gemini_request(object())
         self.assertIsInstance(response, self.FakeResponse)
         self.assertEqual(mocked.call_count, 2)
 
@@ -465,10 +468,12 @@ class GeminiRetryTests(unittest.TestCase):
         with patch.object(
             review.urllib.request, "urlopen", side_effect=TimeoutError("timeout")
         ) as mocked:
-            with patch.object(review.time, "sleep"):
-                with self.assertRaises(TimeoutError):
-                    review.open_gemini_request(object(), attempts=2)
+            with patch.object(review.time, "sleep") as sleep:
+                with patch.object(review.random, "uniform", return_value=0):
+                    with self.assertRaises(TimeoutError):
+                        review.open_gemini_request(object(), attempts=2)
         self.assertEqual(mocked.call_count, 2)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2])
 
 
 class FailureStatusTests(unittest.TestCase):
