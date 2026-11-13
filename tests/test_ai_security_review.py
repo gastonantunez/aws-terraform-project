@@ -308,6 +308,62 @@ class MarkdownSafetyTests(unittest.TestCase):
         self.assertIn("AI Security Review", rendered)
 
 
+class CommitStatusTests(unittest.TestCase):
+    class FakeResponse:
+        def read(self, limit=-1):
+            return b"{}"[:limit] if limit >= 0 else b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def test_pass_publishes_success_status(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            return self.FakeResponse()
+
+        with patch.object(review.urllib.request, "urlopen", side_effect=fake_urlopen):
+            review.publish_commit_status("a" * 40, "PASS", "LOW", 10)
+
+        request = captured["request"]
+        payload = __import__("json").loads(request.data.decode("utf-8"))
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(payload["state"], "success")
+        self.assertEqual(payload["context"], "AI Security Review")
+
+    def test_review_required_and_block_publish_failure_status(self):
+        for decision, level, score in (
+            ("REVIEW_REQUIRED", "MEDIUM", 30),
+            ("BLOCK", "HIGH", 70),
+        ):
+            with self.subTest(decision=decision):
+                captured = {}
+
+                def fake_urlopen(request, timeout):
+                    captured["request"] = request
+                    return self.FakeResponse()
+
+                with patch.object(review.urllib.request, "urlopen", side_effect=fake_urlopen):
+                    review.publish_commit_status("b" * 40, decision, level, score)
+
+                payload = __import__("json").loads(
+                    captured["request"].data.decode("utf-8")
+                )
+                self.assertEqual(payload["state"], "failure")
+
+    def test_rejects_invalid_commit_sha(self):
+        with self.assertRaises(ValueError):
+            review.publish_commit_status("not-a-sha", "PASS", "LOW", 10)
+
+    def test_rejects_invalid_decision(self):
+        with self.assertRaises(ValueError):
+            review.publish_commit_status("c" * 40, "APPROVE", "LOW", 10)
+
+
 class BoundedResponseTests(unittest.TestCase):
     class FakeResponse:
         def __init__(self, payload):
