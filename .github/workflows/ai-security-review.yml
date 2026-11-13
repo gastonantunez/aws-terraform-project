@@ -66,6 +66,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      statuses: write
     steps:
       # The review script is checked out from the trusted base commit,
       # never from the pull-request branch.
@@ -107,6 +108,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_API_URL: ${{ github.api_url }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
