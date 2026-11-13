@@ -541,10 +541,7 @@ def main():
         )
         print(markdown)
         return 0
-    except (
-        urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError,
-        ValueError, TypeError, OSError, RecursionError
-    ) as error:
+    except Exception as error:
         print(
             f"AI security review failed ({type(error).__name__}); details suppressed to protect secrets.",
             file=sys.stderr,
