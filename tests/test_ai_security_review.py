@@ -418,8 +418,10 @@ class FailureStatusTests(unittest.TestCase):
             captured["request"] = request
             return self.FakeResponse()
 
-        with patch.object(review.urllib.request, "urlopen", side_effect=fake_urlopen):
-            self.assertTrue(review.publish_failure_status("d" * 40))
+        with patch.object(review, "TOKEN", "test-token"):
+            with patch.object(review, "REPOSITORY", "owner/repo"):
+                with patch.object(review.urllib.request, "urlopen", side_effect=fake_urlopen):
+                    self.assertTrue(review.publish_failure_status("d" * 40))
 
         payload = __import__("json").loads(captured["request"].data.decode("utf-8"))
         self.assertEqual(captured["request"].get_method(), "POST")
