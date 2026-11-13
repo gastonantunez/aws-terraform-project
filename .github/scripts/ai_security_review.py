@@ -410,6 +410,41 @@ def publish_comment(markdown):
         read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
 
 
+def publish_commit_status(commit_sha, decision, risk_level, score):
+    """Publish a required commit status; only PASS is successful."""
+    if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        raise ValueError("Reviewed commit SHA is invalid.")
+    if decision not in {"PASS", "REVIEW_REQUIRED", "BLOCK"}:
+        raise ValueError("Review decision is invalid.")
+    if risk_level not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        raise ValueError("Risk level is invalid.")
+    if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+        raise ValueError("Risk score is invalid.")
+
+    state = "success" if decision == "PASS" else "failure"
+    description = f"{decision} · {risk_level} risk · score {score}/100"[:140]
+    url = f"{API_URL}/repos/{REPOSITORY}/statuses/{commit_sha}"
+    payload = {
+        "state": state,
+        "context": "AI Security Review",
+        "description": description,
+        "target_url": PR_URL,
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {TOKEN}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        read_limited_response(response, MAX_GITHUB_RESPONSE_BYTES)
+
+
 def main():
     if not API_KEY:
         print("GEMINI_API_KEY is not configured; AI review cannot run.", file=sys.stderr)
@@ -470,6 +505,13 @@ def main():
             )
             with urllib.request.urlopen(slack_request, timeout=20) as slack_response:
                 read_limited_response(slack_response, 64_000)
+        reviewed_sha = os.getenv("REVIEWED_SHA", "")
+        publish_commit_status(
+            reviewed_sha,
+            report["decision"],
+            report["risk_level"],
+            report["risk_score"],
+        )
         print(markdown)
         return 0
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, ValueError, TypeError, OSError, RecursionError) as error:
