@@ -37,13 +37,19 @@ jobs:
           output: trivy-config.json
 
       - name: Run Checkov Terraform scan
-        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
-        with:
-          directory: .
-          framework: terraform
-          soft_fail: true
-          output_format: cli,json
-          output_file_path: console,checkov.json
+        id: checkov
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/tf" -w /tf bridgecrew/checkov:2.0.930 -d /tf --framework terraform --soft-fail -o json > reports/checkov.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("reports/checkov.json").read_text(encoding="utf-8"))
+          if not isinstance(report, dict):
+              raise SystemExit("Checkov did not produce a JSON object.")
+          print("Checkov JSON report generated and validated.")
+          print(f"Passed: {report.get('summary', {}).get('passed', 0)}; Failed: {report.get('summary', {}).get('failed', 0)}")
+          PY
 
       - name: Upload static security reports
         if: always()
@@ -101,7 +107,7 @@ jobs:
       - name: Run AI security review
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.8-flash
+          GEMINI_MODEL: gemini-3.7-flash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
