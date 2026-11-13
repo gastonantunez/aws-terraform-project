@@ -70,8 +70,8 @@ jobs:
           directory: .
           framework: terraform
           soft_fail: true
-          output_format: json
-          output_file_path: reports/checkov.json
+          output_format: cli,json
+          output_file_path: console,reports/checkov.json
 
       - name: Diagnose scanner report files
         if: always()
