@@ -1,7 +1,9 @@
 import json
 import os
 import re
+import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -57,6 +59,26 @@ def read_limited_response(response, limit):
     if len(data) > limit:
         raise ValueError("Remote response exceeded the configured size limit.")
     return data
+
+
+def open_gemini_request(request, attempts=3, timeout=180):
+    """Retry transient network timeouts without masking API or validation errors."""
+    if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
+        raise ValueError("Gemini retry attempts must be a positive integer.")
+    for attempt in range(attempts):
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError as error:
+            if not isinstance(error.reason, (TimeoutError, socket.timeout)):
+                raise
+            if attempt == attempts - 1:
+                raise
+        except (TimeoutError, socket.timeout):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(5 * (attempt + 1))
 
 
 def redact_sensitive(text):
@@ -146,7 +168,7 @@ def gemini_review(diff, scanner_results):
         headers={"Content-Type": "application/json", "x-goog-api-key": API_KEY},
         method="POST"
     )
-    with urllib.request.urlopen(request, timeout=90) as response:
+    with open_gemini_request(request) as response:
         raw_payload = read_limited_response(response, MAX_GEMINI_RESPONSE_BYTES)
     try:
         payload = json.loads(raw_payload.decode("utf-8"))
