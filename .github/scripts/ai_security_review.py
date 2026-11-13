@@ -8,7 +8,7 @@ from pathlib import Path
 import stat
 
 MARKER = "<!-- ai-security-review -->"
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 API_KEY = os.getenv("GEMINI_API_KEY", "")
 TOKEN = os.getenv("GITHUB_TOKEN", "")
 REPOSITORY = os.getenv("GITHUB_REPOSITORY", "")
