@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -61,18 +62,23 @@ def read_limited_response(response, limit):
     return data
 
 
-def open_gemini_request(request, attempts=3, timeout=180):
-    """Retry transient Gemini HTTP and network failures, not permanent API errors."""
+def open_gemini_request(request, attempts=4, timeout=180):
+    """Retry transient Gemini HTTP and network failures with exponential backoff."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
         raise ValueError("Gemini retry attempts must be a positive integer.")
 
     retryable_http_statuses = {408, 429, 500, 502, 503, 504}
     for attempt in range(attempts):
+        retry_after = None
         try:
             return urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as error:
             if error.code not in retryable_http_statuses or attempt == attempts - 1:
                 raise
+            try:
+                retry_after = float(error.headers.get("Retry-After", ""))
+            except (TypeError, ValueError):
+                retry_after = None
             error.close()
         except urllib.error.URLError as error:
             if not isinstance(error.reason, (TimeoutError, socket.timeout)):
@@ -82,7 +88,16 @@ def open_gemini_request(request, attempts=3, timeout=180):
         except (TimeoutError, socket.timeout):
             if attempt == attempts - 1:
                 raise
-        time.sleep(5 * (attempt + 1))
+
+        delay = min(2 ** (attempt + 1), 60)
+        if retry_after is not None and retry_after >= 0:
+            delay = max(delay, min(retry_after, 60))
+        delay += random.uniform(0, min(delay * 0.25, 5))
+        print(
+            f"Gemini API temporary failure; retrying in {delay:.1f}s "
+            f"(attempt {attempt + 1}/{attempts})."
+        )
+        time.sleep(delay)
 
 
 def redact_sensitive(text):
