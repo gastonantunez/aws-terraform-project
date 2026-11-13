@@ -262,6 +262,22 @@ def normalize_scanner_report(report_text, report_name):
     return f"{report_name}:\n" + json.dumps(parsed, ensure_ascii=True, separators=(",", ":"))
 
 
+def enforce_manual_review_when_scanners_incomplete(report):
+    """Prevent an automatic PASS when either static scanner report is unavailable."""
+    report = dict(report)
+    report["risk_score"] = max(report["risk_score"], 25)
+    if report["risk_level"] == "LOW":
+        report["risk_level"] = "MEDIUM"
+    if report["decision"] == "PASS":
+        report["decision"] = "REVIEW_REQUIRED"
+    note = (
+        "Automated approval was disabled because one or more static scanner reports "
+        "were missing or invalid. Complete the static scans and perform a manual review."
+    )
+    report["summary"] = (report["summary"] + " " + note)[:4000]
+    return validate_report(report)
+
+
 def markdown_text(value, limit=2000):
     # Render model-provided content as plain text, not executable Markdown.
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
@@ -383,17 +399,25 @@ def main():
         diff = "No textual diff was available. Review is limited."
 
     scanner_parts = []
+    scanner_reports_complete = True
     for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
         report_text = read_text(report_path, 20000)
-        if report_text:
-            # Scanner output can contain detected secret values; redact it before
-            # including it in the prompt sent to the external AI provider.
-            report_text = redact_sensitive(report_text)
-            scanner_parts.append(normalize_scanner_report(report_text, report_path))
+        if not report_text:
+            scanner_reports_complete = False
+            continue
+        # Scanner output can contain detected secret values; redact it before
+        # including it in the prompt sent to the external AI provider.
+        report_text = redact_sensitive(report_text)
+        normalized_report = normalize_scanner_report(report_text, report_path)
+        if "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
+            scanner_reports_complete = False
+        scanner_parts.append(normalized_report)
     scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
 
     try:
         report = validate_report(gemini_review(diff, scanner))
+        if not scanner_reports_complete:
+            report = enforce_manual_review_when_scanners_incomplete(report)
         markdown = render_report(report)
         Path("ai-security-review.md").write_text(markdown, encoding="utf-8")
         publish_comment(markdown)
