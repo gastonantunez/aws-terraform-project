@@ -73,6 +73,23 @@ jobs:
           output_format: json
           output_file_path: reports/checkov.json
 
+      - name: Diagnose scanner report files
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ("trivy-config.json", "checkov.json"):
+              path = Path("reports") / name
+              print(f"{name}: exists={path.is_file()} size={path.stat().st_size if path.is_file() else 0}")
+              if path.is_file():
+                  try:
+                      json.loads(path.read_text(encoding="utf-8"))
+                      print(f"{name}: valid JSON")
+                  except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                      print(f"{name}: invalid JSON ({type(error).__name__})")
+          PY
+
       - name: Build pull request diff
         if: steps.verify-pr.outcome == 'success'
         run: |
@@ -99,6 +116,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ai-security-integration-report
-          path: ai-security-review.md
+          path: |
+            ai-security-review.md
+            reports/*.json
           if-no-files-found: ignore
           retention-days: 7
