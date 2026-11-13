@@ -524,7 +524,7 @@ def main():
         if not TOKEN or not REPOSITORY or not PR_NUMBER:
             raise ValueError("GitHub PR context is incomplete.")
 
-        raw_diff, diff_truncated = read_text_with_truncation("pr.diff", 60000)
+        raw_diff, diff_truncated = read_text_with_truncation("pr.diff", 120000)
         diff_complete = bool(raw_diff.strip()) and not diff_truncated
         diff = redact_sensitive(raw_diff)
         if not raw_diff.strip():
@@ -533,13 +533,13 @@ def main():
         scanner_parts = []
         scanner_reports_complete = True
         for report_path in ("reports/trivy-config.json", "reports/checkov.json"):
-            report_text = read_text(report_path, 20000)
-            if not report_text:
+            report_text, report_truncated = read_text_with_truncation(report_path, 150000)
+            if not report_text or report_truncated:
                 scanner_reports_complete = False
                 continue
             report_text = redact_sensitive(report_text)
             normalized_report = normalize_scanner_report(report_text, report_path)
-            if "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
+            if report_truncated or "was not valid JSON" in normalized_report or "unexpected JSON type" in normalized_report:
                 scanner_reports_complete = False
             scanner_parts.append(normalized_report)
         scanner = "\n\n".join(scanner_parts) or "No static scanner reports were available."
