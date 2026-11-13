@@ -42,8 +42,8 @@ jobs:
           directory: .
           framework: terraform
           soft_fail: true
-          output_format: json
-          output_file_path: checkov.json
+          output_format: cli,json
+          output_file_path: console,checkov.json
 
       - name: Upload static security reports
         if: always()
@@ -68,8 +68,6 @@ jobs:
       issues: write
       statuses: write
     steps:
-      # The review script is checked out from the trusted base commit,
-      # never from the pull-request branch.
       - name: Checkout trusted review code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -77,7 +75,6 @@ jobs:
           path: trusted
           persist-credentials: false
 
-      # This checkout is data-only. Never execute scripts or workflows from this directory.
       - name: Checkout pull request source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
